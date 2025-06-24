@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import logging
-import os # استيراد مكتبة os للتعامل مع متغيرات البيئة
-import json # استيراد مكتبة json لتحويل النص إلى قاموس
 from datetime import datetime, date, timedelta
 import calendar
+import os
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -18,35 +18,28 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # --- قسم الإعدادات (Firebase and Telegram) ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo")
+FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app") 
 
-# TODO: استبدل بالقيم الحقيقية الخاصة بك
-TELEGRAM_TOKEN = "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo" 
-
-# تأكد من أن هذا هو الرابط الصحيح لقاعدة البيانات وليس للوحة التحكم
-FIREBASE_DATABASE_URL = "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app" 
-
-# --- إعداد اتصال Firebase (معدل ليعمل على Render) ---
+# --- إعداد اتصال Firebase (يعمل على Render/Railway وعلى الجهاز المحلي) ---
 try:
-    # تحقق مما إذا كان المفتاح موجوداً في متغيرات البيئة (على خادم Render)
     firebase_creds_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
     if firebase_creds_json:
         print("Found Firebase credentials in environment variable.")
-        # تحويل النص إلى قاموس بايثون
         cred_dict = json.loads(firebase_creds_json)
         cred = credentials.Certificate(cred_dict)
     else:
-        # إذا لم يكن موجوداً، ابحث عن الملف المحلي (للتجربة على جهازك)
         print("Using local 'firebase-credentials.json' file.")
         FIREBASE_CREDENTIALS_FILE = "firebase-credentials.json"
         cred = credentials.Certificate(FIREBASE_CREDENTIALS_FILE)
 
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': FIREBASE_DATABASE_URL
-    })
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred, {
+            'databaseURL': FIREBASE_DATABASE_URL
+        })
     print("Firebase connected successfully!")
 except Exception as e:
     print(f"Error connecting to Firebase: {e}")
-    print("Please make sure 'firebase-credentials.json' is available or FIREBASE_CREDENTIALS_JSON environment variable is set.")
     exit()
 
 # إعداد التسجيل لرؤية الأخطاء
@@ -55,7 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# حالات المحادثة الجديدة لدعم نطاق التاريخ
+# حالات المحادثة
 (
     ENTERING_NAME,
     ENTERING_REASON,
@@ -64,10 +57,8 @@ logger = logging.getLogger(__name__)
 ) = range(4)
 
 
-# --- دوال إنشاء التقويم التفاعلي المطور ---
-
+# --- دوال إنشاء التقويم التفاعلي ---
 def create_calendar(year: int, month: int, start_date: date | None = None) -> InlineKeyboardMarkup:
-    # ... (بقية الكود تبقى كما هي)
     cal = calendar.Calendar()
     month_name = calendar.month_name[month]
     today = date.today()
@@ -89,7 +80,6 @@ def create_calendar(year: int, month: int, start_date: date | None = None) -> In
             else:
                 current_day = date(year, month, day)
                 is_disabled = current_day < today or (start_date and current_day < start_date)
-                
                 day_text = str(day)
                 if start_date and current_day == start_date:
                     day_text = f"[{day}]"
@@ -102,7 +92,7 @@ def create_calendar(year: int, month: int, start_date: date | None = None) -> In
         
     return InlineKeyboardMarkup(keyboard)
 
-# --- بقية الدوال والمعالجات تبقى كما هي ---
+# --- دوال مساعدة أخرى ---
 def get_predefined_user(telegram_id: str) -> dict | None:
     ref = db.reference('/users')
     users = ref.get()
@@ -131,6 +121,7 @@ def get_hr_telegram_id() -> str | None:
             return user_data.get("telegram_id")
     return None
 
+# --- معالجات الأوامر والمحادثة ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
@@ -170,10 +161,14 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     
     callback_data = query.data
-    
-    if callback_data.startswith("CAL_DAY"):
-        _, year, month, day = callback_data.split("_")
-        selected_day = date(int(year), int(month), int(day))
+    logger.info(f"Calendar callback received: {callback_data}")
+
+    parts = callback_data.split("_")
+    action = parts[1]
+
+    if action == "DAY":
+        year, month, day = map(int, parts[2:])
+        selected_day = date(year, month, day)
 
         if 'start_date' not in context.user_data:
             context.user_data['start_date'] = selected_day
@@ -192,7 +187,6 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 return SELECTING_DATE_RANGE
                 
             context.user_data['end_date'] = end_date
-            
             final_date_str = f"من {start_date.strftime('%d/%m/%Y')} إلى {end_date.strftime('%d/%m/%Y')}"
             context.user_data['leave_date_range'] = final_date_str
 
@@ -210,16 +204,16 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
             await query.message.reply_text(summary, reply_markup=reply_markup)
             return CONFIRMING_LEAVE
 
-    elif callback_data.startswith("CAL_NAV"):
-        _, year, month = callback_data.split("_")
+    elif action == "NAV":
+        year, month = map(int, parts[2:])
         start_date = context.user_data.get('start_date')
         await query.edit_message_text(
             query.message.text,
-            reply_markup=create_calendar(int(year), int(month), start_date=start_date)
+            reply_markup=create_calendar(year, month, start_date=start_date)
         )
         return SELECTING_DATE_RANGE
         
-    elif callback_data == "CAL_IGNORE":
+    elif action == "IGNORE":
         return SELECTING_DATE_RANGE
 
 async def confirm_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
