@@ -20,7 +20,7 @@ from firebase_admin import credentials, db
 # --- قسم الإعدادات (Firebase and Telegram) ---
 
 # TODO: استبدل بالقيم الحقيقية الخاصة بك
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_API_TOKEN" 
+TELEGRAM_TOKEN = "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo" 
 
 # تأكد من أن هذا هو الرابط الصحيح لقاعدة البيانات وليس للوحة التحكم
 FIREBASE_DATABASE_URL = "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app" 
