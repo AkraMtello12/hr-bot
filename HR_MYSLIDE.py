@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
+import os # استيراد مكتبة os للتعامل مع متغيرات البيئة
+import json # استيراد مكتبة json لتحويل النص إلى قاموس
 from datetime import datetime, date, timedelta
 import calendar
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,24 +20,33 @@ from firebase_admin import credentials, db
 # --- قسم الإعدادات (Firebase and Telegram) ---
 
 # TODO: استبدل بالقيم الحقيقية الخاصة بك
-TELEGRAM_TOKEN = "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo" 
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_API_TOKEN" 
 
 # تأكد من أن هذا هو الرابط الصحيح لقاعدة البيانات وليس للوحة التحكم
 FIREBASE_DATABASE_URL = "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app" 
 
-# اسم ملف مفتاح Firebase
-FIREBASE_CREDENTIALS_FILE = "firebase-credentials.json"
-
-# --- إعداد اتصال Firebase ---
+# --- إعداد اتصال Firebase (معدل ليعمل على Render) ---
 try:
-    cred = credentials.Certificate(FIREBASE_CREDENTIALS_FILE)
+    # تحقق مما إذا كان المفتاح موجوداً في متغيرات البيئة (على خادم Render)
+    firebase_creds_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
+    if firebase_creds_json:
+        print("Found Firebase credentials in environment variable.")
+        # تحويل النص إلى قاموس بايثون
+        cred_dict = json.loads(firebase_creds_json)
+        cred = credentials.Certificate(cred_dict)
+    else:
+        # إذا لم يكن موجوداً، ابحث عن الملف المحلي (للتجربة على جهازك)
+        print("Using local 'firebase-credentials.json' file.")
+        FIREBASE_CREDENTIALS_FILE = "firebase-credentials.json"
+        cred = credentials.Certificate(FIREBASE_CREDENTIALS_FILE)
+
     firebase_admin.initialize_app(cred, {
         'databaseURL': FIREBASE_DATABASE_URL
     })
     print("Firebase connected successfully!")
 except Exception as e:
     print(f"Error connecting to Firebase: {e}")
-    print("Please make sure 'firebase-credentials.json' is in the same directory and the database URL is correct.")
+    print("Please make sure 'firebase-credentials.json' is available or FIREBASE_CREDENTIALS_JSON environment variable is set.")
     exit()
 
 # إعداد التسجيل لرؤية الأخطاء
@@ -56,14 +67,11 @@ logger = logging.getLogger(__name__)
 # --- دوال إنشاء التقويم التفاعلي المطور ---
 
 def create_calendar(year: int, month: int, start_date: date | None = None) -> InlineKeyboardMarkup:
-    """
-    ينشئ تقويماً تفاعلياً يمنع اختيار التواريخ الماضية ويدعم اختيار نطاق.
-    """
+    # ... (بقية الكود تبقى كما هي)
     cal = calendar.Calendar()
     month_name = calendar.month_name[month]
     today = date.today()
     
-    # صف العنوان وأزرار التنقل
     header_row = [
         InlineKeyboardButton("<", callback_data=f"CAL_NAV_{year}_{month-1}" if month > 1 else f"CAL_NAV_{year-1}_12"),
         InlineKeyboardButton(f"{month_name} {year}", callback_data="CAL_IGNORE"),
@@ -73,7 +81,6 @@ def create_calendar(year: int, month: int, start_date: date | None = None) -> In
     days_row = [InlineKeyboardButton(day, callback_data="CAL_IGNORE") for day in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]]
     keyboard = [header_row, days_row]
     
-    # صفوف الأيام
     for week in cal.monthdayscalendar(year, month):
         row = []
         for day in week:
@@ -81,13 +88,11 @@ def create_calendar(year: int, month: int, start_date: date | None = None) -> In
                 row.append(InlineKeyboardButton(" ", callback_data="CAL_IGNORE"))
             else:
                 current_day = date(year, month, day)
-                # تحديد الأيام التي لا يمكن الضغط عليها
-                # (قبل اليوم، أو قبل تاريخ البدء المحدد)
                 is_disabled = current_day < today or (start_date and current_day < start_date)
                 
                 day_text = str(day)
                 if start_date and current_day == start_date:
-                    day_text = f"[{day}]" # علامة لتحديد يوم البدء
+                    day_text = f"[{day}]"
 
                 if is_disabled:
                     row.append(InlineKeyboardButton(" ", callback_data="CAL_IGNORE"))
@@ -97,8 +102,7 @@ def create_calendar(year: int, month: int, start_date: date | None = None) -> In
         
     return InlineKeyboardMarkup(keyboard)
 
-# --- دوال مساعدة أخرى ---
-
+# --- بقية الدوال والمعالجات تبقى كما هي ---
 def get_predefined_user(telegram_id: str) -> dict | None:
     ref = db.reference('/users')
     users = ref.get()
@@ -127,8 +131,6 @@ def get_hr_telegram_id() -> str | None:
             return user_data.get("telegram_id")
     return None
 
-# --- معالجات الأوامر والمحادثة ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
@@ -155,7 +157,6 @@ async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ENTERING_REASON
 
 async def enter_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """يستقبل السبب ويعرض التقويم لاختيار تاريخ البدء."""
     context.user_data['leave_reason'] = update.message.text
     today = date.today()
     await update.message.reply_text(
@@ -165,23 +166,16 @@ async def enter_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return SELECTING_DATE_RANGE
 
 async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """يعالج تفاعلات التقويم لاختيار نطاق التاريخ."""
     query = update.callback_query
     await query.answer()
     
     callback_data = query.data
-    logger.info(f"Calendar callback received: {callback_data}") # سطر جديد للتحقق من عمل الأزرار
-
+    
     if callback_data.startswith("CAL_DAY"):
-        # --- التصحيح ---
-        # تم تغيير طريقة التقسيم لتتوقع 5 أجزاء بدلاً من 4
-        # CAL_DAY_2025_6_26 -> ['CAL', 'DAY', '2025', '6', '26']
-        _, _, year, month, day = callback_data.split("_")
+        _, year, month, day = callback_data.split("_")
         selected_day = date(int(year), int(month), int(day))
 
-        # التحقق مما إذا كنا نختار تاريخ البدء أم الانتهاء
         if 'start_date' not in context.user_data:
-            # نحن نختار تاريخ البدء
             context.user_data['start_date'] = selected_day
             await query.edit_message_text(
                 f"تاريخ البدء المحدد: {selected_day.strftime('%d/%m/%Y')}\n\n"
@@ -190,11 +184,9 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
             )
             return SELECTING_DATE_RANGE
         else:
-            # نحن نختار تاريخ الانتهاء
             start_date = context.user_data['start_date']
             end_date = selected_day
             
-            # التأكد من أن تاريخ الانتهاء بعد تاريخ البدء
             if end_date < start_date:
                 await context.bot.answer_callback_query(query.id, "تاريخ الانتهاء يجب أن يكون بعد تاريخ البدء!", show_alert=True)
                 return SELECTING_DATE_RANGE
@@ -206,7 +198,6 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
             await query.edit_message_text(f"تم اختيار المدة: {final_date_str}")
             
-            # عرض ملخص الطلب
             summary = (
                 f"--- ملخص الطلب ---\n"
                 f"اسم الموظف: {context.user_data['employee_name']}\n"
@@ -220,13 +211,10 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
             return CONFIRMING_LEAVE
 
     elif callback_data.startswith("CAL_NAV"):
-        # --- التصحيح ---
-        # تم تغيير طريقة التقسيم لتتوقع 4 أجزاء بدلاً من 3
-        # CAL_NAV_2025_5 -> ['CAL', 'NAV', '2025', '5']
-        _, _, year, month = callback_data.split("_")
+        _, year, month = callback_data.split("_")
         start_date = context.user_data.get('start_date')
         await query.edit_message_text(
-            query.message.text, # الحفاظ على نفس النص (اختر تاريخ البدء / الانتهاء)
+            query.message.text,
             reply_markup=create_calendar(int(year), int(month), start_date=start_date)
         )
         return SELECTING_DATE_RANGE
@@ -235,7 +223,6 @@ async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAUL
         return SELECTING_DATE_RANGE
 
 async def confirm_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """يرسل طلب الإجازة بالمدة المحددة."""
     query = update.callback_query
     await query.answer()
 
@@ -253,7 +240,7 @@ async def confirm_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "employee_name": context.user_data['employee_name'],
         "employee_telegram_id": str(user.id),
         "reason": context.user_data['leave_reason'],
-        "date_range": context.user_data['leave_date_range'], # حفظ النطاق
+        "date_range": context.user_data['leave_date_range'],
         "status": "pending",
         "request_time": datetime.now().isoformat(),
     })
@@ -268,7 +255,7 @@ async def confirm_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         f"📣 طلب إجازة جديد 📣\n\n"
         f"من الموظف: {context.user_data['employee_name']}\n"
         f"السبب: {context.user_data['leave_reason']}\n"
-        f"المدة: {context.user_data['leave_date_range']}\n\n" # استخدام النطاق
+        f"المدة: {context.user_data['leave_date_range']}\n\n"
         "الرجاء اتخاذ إجراء:"
     )
     keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_{request_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"reject_{request_id}")]]
@@ -295,12 +282,12 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text("هذا الطلب لم يعد متاحاً أو تمت معالجته بالفعل.")
         return
 
-    date_info = leave_request.get('date_range', leave_request.get('date', 'غير محدد'))
+    date_info = leave_request.get('date_range', 'غير محدد')
 
     if action == "approve":
         leave_ref.update({"status": "approved"})
         response_text = "✅ تمت الموافقة على الطلب."
-        await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك للدة {date_info}.")
+        await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك للمدة {date_info}.")
         
         leader_ids = get_all_team_leaders_ids()
         if leader_ids:
