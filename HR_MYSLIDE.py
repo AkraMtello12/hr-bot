@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date, timedelta, time # <-- التصحيح: تم إضافة time هنا
+from datetime import datetime, date, timedelta, time
 import calendar
 import os
 import json
@@ -576,4 +576,5 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == "__main__":
-    mai
+    main()
+```
