@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # إجازة ساعية
 (HL_CHOOSING_TYPE, HL_SELECTING_TIME, HL_ENTERING_NAME, HL_ENTERING_REASON, HL_CONFIRMING_LEAVE) = range(5, 10)
 # صندوق الاقتراحات
-(SUGGESTION_ENTERING_NAME, SUGGESTION_ENTERING_MESSAGE) = range(10, 12)
+(SUGGESTION_ENTERING_MESSAGE, SUGGESTION_CHOOSE_ANONYMITY) = range(10, 12)
 
 
 # --- دوال إنشاء التقويم والوقت ---
@@ -144,32 +144,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def start_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("أهلاً بك في صندوق الاقتراحات والشكاوى.\n\nالرجاء إدخال اسمك الكامل:")
-    return SUGGESTION_ENTERING_NAME
-
-async def suggestion_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['suggestion_user_name'] = update.message.text
-    await update.message.reply_text("شكراً لك. الآن تفضل بكتابة اقتراحك أو شكواك. سيتم إرسالها مباشرةً إلى مدير الموارد البشرية.")
+    await query.edit_message_text("أهلاً بك في صندوق الاقتراحات والشكاوى.\n\nتفضل بكتابة اقتراحك أو شكواك. سيتم إرسالها إلى مدير الموارد البشرية.")
     return SUGGESTION_ENTERING_MESSAGE
 
 async def suggestion_enter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    suggestion_message = update.message.text
-    user_name = context.user_data.get('suggestion_user_name', 'موظف')
-    user = update.effective_user
+    # حفظ الرسالة مؤقتاً
+    context.user_data['suggestion_message'] = update.message.text
     
+    keyboard = [
+        [InlineKeyboardButton("👤 إظهار اسمي", callback_data="suggestion_named")],
+        [InlineKeyboardButton("🔒 إرسال كرسالة مجهولة", callback_data="suggestion_anonymous")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "شكراً لك. كيف تريد إرسال هذه الرسالة؟",
+        reply_markup=reply_markup
+    )
+    return SUGGESTION_CHOOSE_ANONYMITY
+
+async def suggestion_choose_anonymity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    is_anonymous = query.data == 'suggestion_anonymous'
+    suggestion_message = context.user_data.get('suggestion_message')
+    user = update.effective_user
+
+    sender_name = "موظف مجهول" if is_anonymous else user.full_name
+    
+    # حفظ الاقتراح في Firebase
     suggestions_ref = db.reference('/suggestions')
     suggestions_ref.push({
-        "employee_name": user_name,
-        "employee_telegram_id": str(user.id),
+        "sender_name": sender_name,
+        "sender_telegram_id": str(user.id), # نحفظ المعرف دائماً للسجلات الداخلية
+        "is_anonymous": is_anonymous,
         "message": suggestion_message,
         "submission_time": datetime.now().isoformat()
     })
 
+    # إرسال الرسالة إلى مدير الموارد البشرية
     hr_chat_id = get_hr_telegram_id()
     if hr_chat_id:
         hr_message = (
             f"📬 رسالة جديدة في صندوق الاقتراحات 📬\n\n"
-            f"**من الموظف:** {user_name}\n\n"
+            f"**من:** {sender_name}\n\n"
             f"**نص الرسالة:**\n{suggestion_message}"
         )
         try:
@@ -177,10 +196,11 @@ async def suggestion_enter_message(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.error(f"Failed to send suggestion to HR: {e}")
 
-    await update.message.reply_text("✅ شكراً لك. تم إرسال رسالتك بنجاح إلى الإدارة.")
+    await query.edit_message_text("✅ شكراً لك. تم إرسال رسالتك بنجاح إلى الإدارة.")
     
     context.user_data.clear()
     return ConversationHandler.END
+
 
 # --- بداية معالج محادثة الإجازة الساعية ---
 async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -505,8 +525,8 @@ def main() -> None:
     suggestion_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_suggestion, pattern="^start_suggestion$")],
         states={
-            SUGGESTION_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, suggestion_enter_name)],
             SUGGESTION_ENTERING_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, suggestion_enter_message)],
+            SUGGESTION_CHOOSE_ANONYMITY: [CallbackQueryHandler(suggestion_choose_anonymity, pattern="^suggestion_")],
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
     )
@@ -522,4 +542,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
