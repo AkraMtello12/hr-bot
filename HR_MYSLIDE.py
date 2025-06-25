@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
     MANAGER_CHOOSING_VIEW,
     # سبب الرفض
     AWAITING_REJECTION_REASON
-) = range(16)
+) = range(15) # التصحيح: تم تغيير القيمة من 16 إلى 15
 
 
 # --- دوال إنشاء التقويم والوقت ---
@@ -173,10 +173,8 @@ async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     message = "📜 **سجل طلباتك:**\n\n"
     found_requests = False
     
-    # Combined search for both leave types
     all_leaves_ref = db.reference('/').get()
     
-    # Daily Leaves
     fd_leaves = all_leaves_ref.get('full_day_leaves', {})
     user_fd_leaves = {k: v for k, v in fd_leaves.items() if v.get('employee_telegram_id') == user_id}
     if user_fd_leaves:
@@ -189,7 +187,6 @@ async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 message += f"   **سبب الرفض:** {req.get('rejection_reason')}\n"
             message += "\n"
 
-    # Hourly Leaves
     hl_leaves = all_leaves_ref.get('hourly_leaves', {})
     user_hl_leaves = {k: v for k, v in hl_leaves.items() if v.get('employee_telegram_id') == user_id}
     if user_hl_leaves:
@@ -209,7 +206,6 @@ async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     keyboard = [[InlineKeyboardButton("⬅️ عودة للقائمة الرئيسية", callback_data="back_to_main")]]
     await query.edit_message_text(message, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- لوحة تحكم المدراء ---
 async def manager_view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -224,7 +220,7 @@ async def manager_view_requests(update: Update, context: ContextTypes.DEFAULT_TY
 async def display_requests_by_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    status = query.data.split('_')[1] # pending, approved, rejected
+    status = query.data.split('_')[1] 
     
     user_id = str(query.from_user.id)
     user_info = get_predefined_user(user_id)
@@ -233,7 +229,6 @@ async def display_requests_by_status(update: Update, context: ContextTypes.DEFAU
     await query.edit_message_text(f"جاري جلب الطلبات ({status})...")
     found_requests = False
 
-    # Daily Leaves
     fd_leaves_ref = db.reference('/full_day_leaves').order_by_child('status').equal_to(status).get() or {}
     if fd_leaves_ref:
         found_requests = True
@@ -248,7 +243,6 @@ async def display_requests_by_status(update: Update, context: ContextTypes.DEFAU
                              InlineKeyboardButton("❌ رفض", callback_data=f"reject_fd_{req_id}")]]
             await query.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
 
-    # Hourly Leaves
     hl_leaves_ref = db.reference('/hourly_leaves').order_by_child('status').equal_to(status).get() or {}
     if hl_leaves_ref:
         found_requests = True
@@ -266,9 +260,7 @@ async def display_requests_by_status(update: Update, context: ContextTypes.DEFAU
     if not found_requests:
         await query.message.reply_text(f"لا توجد طلبات ({status}) حالياً.")
 
-    # Add a back button to return to the manager's menu
     await query.message.reply_text("للعودة لقائمة عرض الطلبات:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ عودة", callback_data="manager_view_requests")]]))
-
 
 # --- بداية معالج محادثة صندوق الاقتراحات ---
 async def start_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -294,7 +286,8 @@ async def suggestion_choose_anonymity(update: Update, context: ContextTypes.DEFA
     await query.answer()
     
     if query.data == 'back_to_suggestion_start':
-        return await start_suggestion(update, context)
+        await start_suggestion(update, context)
+        return SUGGESTION_ENTERING_MESSAGE
 
     is_anonymous = query.data == 'suggestion_anonymous'
     suggestion_message = context.user_data.get('suggestion_message')
@@ -354,10 +347,8 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
 
     if query.data == 'back_to_hourly_type':
-        # Re-call the previous step's handler
         await start_hourly_leave(update, context)
         return HL_CHOOSING_TYPE
-
 
     selected_time = query.data.split('_', 1)[1]
     context.user_data['selected_time'] = selected_time
@@ -441,8 +432,6 @@ async def fd_choose_duration_type(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     if query.data == "back_to_fd_name":
-        # Cannot go back to a text input step this way, needs different logic.
-        # For now, let's just re-ask for the name.
         await query.edit_message_text("الرجاء إدخال اسمك الكامل مرة أخرى:")
         return FD_ENTERING_NAME
 
@@ -462,7 +451,6 @@ async def fd_calendar_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     callback_data = query.data
 
     if callback_data == "back_to_duration_type":
-        # Re-show the duration type selection
         keyboard = [
             [InlineKeyboardButton("🗓️ يوم واحد", callback_data="duration_single")],
             [InlineKeyboardButton("🔁 أيام متتالية", callback_data="duration_range")],
@@ -579,7 +567,7 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         response_text = "✅ تمت الموافقة على الطلب."
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
         
-        leader_ids = get_all_team_leaders_ids()
+        leader_ids = get_all_managers_ids() # تم التعديل ليشمل المدراء أيضاً
         if leader_ids:
             notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
             
@@ -587,9 +575,8 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 try:
                     await context.bot.send_message(chat_id=leader_id, text=notification_message)
                 except Exception as e:
-                    logger.error(f"Failed to send message to Team Leader {leader_id}: {e}")
-            response_text += "\nتم إرسال إشعار لقادة الفرق."
-            
+                    logger.error(f"Failed to send notification to {leader_id}: {e}")
+            response_text += "\nتم إرسال إشعار للمسؤولين."
     else: # reject
         leave_ref.update({"status": "rejected"})
         response_text = "❌ تم رفض الطلب."
