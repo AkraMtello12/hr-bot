@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time # <-- التصحيح: تم إضافة time هنا
 import calendar
 import os
 import json
@@ -19,7 +19,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # --- قسم الإعدادات (Firebase and Telegram) ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_TELEGRAM_API_TOKEN") 
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo") 
 FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app") 
 
 # --- إعداد اتصال Firebase ---
@@ -576,4 +576,4 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    mai
