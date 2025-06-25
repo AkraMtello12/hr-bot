@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
     MANAGER_CHOOSING_VIEW,
     # سبب الرفض
     AWAITING_REJECTION_REASON
-) = range(15) # التصحيح: تم تغيير القيمة من 16 إلى 15
+) = range(15)
 
 
 # --- دوال إنشاء التقويم والوقت ---
@@ -137,7 +137,7 @@ def get_all_managers_ids():
     return list(set(manager_ids))
 
 # --- معالجات الأوامر الرئيسية والميزات الجديدة ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, from_back_button: bool = False) -> None:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
     
@@ -160,11 +160,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not predefined_user:
          keyboard.append([InlineKeyboardButton("📂 طلباتي", callback_data="my_requests")])
 
-    if update.callback_query:
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query and from_back_button:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(message + "\n\nالرجاء اختيار الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.callback_query.edit_message_text(message + "\n\nالرجاء اختيار الخدمة المطلوبة:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text(message + "\n\nالرجاء اختيار الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(message + "\n\nالرجاء اختيار الخدمة المطلوبة:", reply_markup=reply_markup)
+
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler to return to the main menu from a callback query."""
+    await start(update, context, from_back_button=True)
+    return ConversationHandler.END
+
 
 async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -333,7 +341,7 @@ async def choose_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     
     if query.data == 'back_to_main':
-        await start(update, context)
+        await start(update, context, from_back_button=True)
         return ConversationHandler.END
 
     leave_type = query.data.split('_')[1] 
@@ -348,6 +356,7 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if query.data == 'back_to_hourly_type':
         await start_hourly_leave(update, context)
+        # We don't return a state here, as start_hourly_leave handles the message and the state is managed by its return value
         return HL_CHOOSING_TYPE
 
     selected_time = query.data.split('_', 1)[1]
@@ -414,7 +423,7 @@ async def start_full_day_leave(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def fd_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['employee_name'] = update.message.text
-    await update.message.reply_text("شكراً لك. الآن الرجاء إدخال سبب الإجازة:")
+    await update.message.reply_text("شكراً لك. الآن الرجاء إدخال سبب الإجازة: (للعودة أرسل /back)")
     return FD_ENTERING_REASON
 
 async def fd_enter_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -567,15 +576,15 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         response_text = "✅ تمت الموافقة على الطلب."
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
         
-        leader_ids = get_all_managers_ids() # تم التعديل ليشمل المدراء أيضاً
-        if leader_ids:
+        manager_ids = get_all_managers_ids() 
+        if manager_ids:
             notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
             
-            for leader_id in leader_ids:
+            for manager_id in manager_ids:
                 try:
-                    await context.bot.send_message(chat_id=leader_id, text=notification_message)
+                    await context.bot.send_message(chat_id=manager_id, text=notification_message)
                 except Exception as e:
-                    logger.error(f"Failed to send notification to {leader_id}: {e}")
+                    logger.error(f"Failed to send notification to {manager_id}: {e}")
             response_text += "\nتم إرسال إشعار للمسؤولين."
     else: # reject
         leave_ref.update({"status": "rejected"})
@@ -633,7 +642,7 @@ def main() -> None:
     )
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(start, pattern="^back_to_main$"))
+    application.add_handler(CallbackQueryHandler(back_to_main_menu, pattern="^back_to_main$"))
     application.add_handler(full_day_leave_conv)
     application.add_handler(hourly_leave_conv)
     application.add_handler(suggestion_conv)
