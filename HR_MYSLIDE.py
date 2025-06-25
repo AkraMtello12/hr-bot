@@ -439,20 +439,26 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
+    employee_name = leave_request.get('employee_name', 'موظف')
 
     if action == "approve":
         leave_ref.update({"status": "approved"})
         response_text = "✅ تمت الموافقة على الطلب."
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
-        if leave_type == 'fd': # إرسال إشعار لقادة الفرق فقط للإجازات اليومية
-            leader_ids = get_all_team_leaders_ids()
-            if leader_ids:
-                for leader_id in leader_ids:
-                    try:
-                        await context.bot.send_message(chat_id=leader_id, text=f"🔔 تنبيه: الموظف ({leave_request.get('employee_name')}) سيكون في إجازة: {date_info}.")
-                    except Exception as e:
-                        logger.error(f"Failed to send message to Team Leader {leader_id}: {e}")
-                response_text += "\nتم إرسال إشعار لقادة الفرق."
+        
+        # --- التعديل: إرسال إشعار لقادة الفرق في كلتا الحالتين ---
+        leader_ids = get_all_team_leaders_ids()
+        if leader_ids:
+            # تخصيص رسالة الإشعار بناءً على نوع الإجازة
+            notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
+            
+            for leader_id in leader_ids:
+                try:
+                    await context.bot.send_message(chat_id=leader_id, text=notification_message)
+                except Exception as e:
+                    logger.error(f"Failed to send message to Team Leader {leader_id}: {e}")
+            response_text += "\nتم إرسال إشعار لقادة الفرق."
+            
     else: # reject
         leave_ref.update({"status": "rejected"})
         response_text = "❌ تم رفض الطلب."
