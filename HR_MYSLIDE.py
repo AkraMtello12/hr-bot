@@ -19,8 +19,8 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # --- قسم الإعدادات (Firebase and Telegram) ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo")
-FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_TELEGRAM_API_TOKEN") 
+FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app") 
 
 # --- إعداد اتصال Firebase ---
 try:
@@ -40,30 +40,20 @@ except Exception as e:
     print(f"Error connecting to Firebase: {e}")
     exit()
 
-# إعداد التسجيل لرؤية الأخطاء
+# إعداد التسجيل
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# حالات محادثة الإجازة اليومية
-(
-    FD_ENTERING_NAME,
-    FD_ENTERING_REASON,
-    FD_CHOOSING_DURATION_TYPE,
-    FD_SELECTING_DATES,
-    FD_CONFIRMING_LEAVE,
-) = range(5)
-
-# حالات محادثة الإجازة الساعية
-(
-    HL_CHOOSING_TYPE,
-    HL_SELECTING_TIME,
-    HL_ENTERING_NAME,
-    HL_ENTERING_REASON,
-    HL_CONFIRMING_LEAVE,
-) = range(5, 10)
+# --- تعريف حالات المحادثة ---
+# إجازة يومية
+(FD_ENTERING_NAME, FD_ENTERING_REASON, FD_CHOOSING_DURATION_TYPE, FD_SELECTING_DATES, FD_CONFIRMING_LEAVE) = range(5)
+# إجازة ساعية
+(HL_CHOOSING_TYPE, HL_SELECTING_TIME, HL_ENTERING_NAME, HL_ENTERING_REASON, HL_CONFIRMING_LEAVE) = range(5, 10)
+# سبب الرفض
+AWAITING_REJECTION_REASON = range(10, 11)[0]
 
 
-# --- دوال إنشاء التقويم ---
+# --- دوال إنشاء التقويم والوقت ---
 def create_advanced_calendar(year: int, month: int, selection_mode: str, selected_dates: list) -> InlineKeyboardMarkup:
     cal = calendar.Calendar()
     month_name = calendar.month_name[month]
@@ -97,27 +87,13 @@ def create_advanced_calendar(year: int, month: int, selection_mode: str, selecte
         keyboard.append([InlineKeyboardButton("✅ تم الاختيار", callback_data="CAL_DONE")])
     return InlineKeyboardMarkup(keyboard)
 
-# --- دوال إنشاء أزرار الوقت (محدثة) ---
 def create_time_keyboard(leave_type: str) -> InlineKeyboardMarkup:
     keyboard = []
     if leave_type == 'late':
-        keyboard = [
-            [InlineKeyboardButton("9:30 AM", callback_data="TIME_9:30 AM"), InlineKeyboardButton("10:00 AM", callback_data="TIME_10:00 AM")],
-            [InlineKeyboardButton("10:30 AM", callback_data="TIME_10:30 AM"), InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM")],
-            [InlineKeyboardButton("11:30 AM", callback_data="TIME_11:30 AM"), InlineKeyboardButton("12:00 PM", callback_data="TIME_12:00 PM")],
-            [InlineKeyboardButton("12:30 PM", callback_data="TIME_12:30 PM"), InlineKeyboardButton("1:00 PM", callback_data="TIME_1:00 PM")],
-            [InlineKeyboardButton("1:30 PM", callback_data="TIME_1:30 PM"), InlineKeyboardButton("2:00 PM", callback_data="TIME_2:00 PM")],
-        ]
+        keyboard = [[InlineKeyboardButton("9:30 AM", callback_data="TIME_9:30 AM"), InlineKeyboardButton("10:00 AM", callback_data="TIME_10:00 AM")],[InlineKeyboardButton("10:30 AM", callback_data="TIME_10:30 AM"), InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM")],[InlineKeyboardButton("11:30 AM", callback_data="TIME_11:30 AM"), InlineKeyboardButton("12:00 PM", callback_data="TIME_12:00 PM")],[InlineKeyboardButton("12:30 PM", callback_data="TIME_12:30 PM"), InlineKeyboardButton("1:00 PM", callback_data="TIME_1:00 PM")],[InlineKeyboardButton("1:30 PM", callback_data="TIME_1:30 PM"), InlineKeyboardButton("2:00 PM", callback_data="TIME_2:00 PM")],]
     elif leave_type == 'early':
-        keyboard = [
-            [InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM"), InlineKeyboardButton("11:30 AM", callback_data="TIME_11:30 AM")],
-            [InlineKeyboardButton("12:00 PM", callback_data="TIME_12:00 PM"), InlineKeyboardButton("12:30 PM", callback_data="TIME_12:30 PM")],
-            [InlineKeyboardButton("1:00 PM", callback_data="TIME_1:00 PM"), InlineKeyboardButton("1:30 PM", callback_data="TIME_1:30 PM")],
-            [InlineKeyboardButton("2:00 PM", callback_data="TIME_2:00 PM"), InlineKeyboardButton("2:30 PM", callback_data="TIME_2:30 PM")],
-            [InlineKeyboardButton("3:00 PM", callback_data="TIME_3:00 PM"), InlineKeyboardButton("3:30 PM", callback_data="TIME_3:30 PM")],
-        ]
+        keyboard = [[InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM"), InlineKeyboardButton("11:30 AM", callback_data="TIME_11:30 AM")],[InlineKeyboardButton("12:00 PM", callback_data="TIME_12:00 PM"), InlineKeyboardButton("12:30 PM", callback_data="TIME_12:30 PM")],[InlineKeyboardButton("1:00 PM", callback_data="TIME_1:00 PM"), InlineKeyboardButton("1:30 PM", callback_data="TIME_1:30 PM")],[InlineKeyboardButton("2:00 PM", callback_data="TIME_2:00 PM"), InlineKeyboardButton("2:30 PM", callback_data="TIME_2:30 PM")],[InlineKeyboardButton("3:00 PM", callback_data="TIME_3:00 PM"), InlineKeyboardButton("3:30 PM", callback_data="TIME_3:30 PM")],]
     return InlineKeyboardMarkup(keyboard)
-
 
 # --- دوال مساعدة أخرى ---
 def get_predefined_user(telegram_id: str):
@@ -128,14 +104,15 @@ def get_predefined_user(telegram_id: str):
             return user_data
     return None
 
-def get_all_team_leaders_ids():
-    leader_ids = []
+def get_all_managers_ids():
+    manager_ids = []
     ref = db.reference('/users')
     users = ref.get() or {}
     for user_data in users.values():
-        if user_data and user_data.get("role") == "team_leader":
-            leader_ids.append(user_data.get("telegram_id"))
-    return leader_ids
+        role = user_data.get("role")
+        if user_data and (role == "team_leader" or role == "hr"):
+            manager_ids.append(user_data.get("telegram_id"))
+    return list(set(manager_ids)) 
 
 def get_hr_telegram_id():
     ref = db.reference('/users')
@@ -144,76 +121,103 @@ def get_hr_telegram_id():
         if user_data and user_data.get("role") == "hr":
             return user_data.get("telegram_id")
     return None
-    
-def check_for_duplicate_request(new_request: dict, leave_type: str) -> bool:
-    """Checks for identical requests submitted in the last 24 hours."""
-    db_path = f"/{leave_type}_leaves"
-    ref = db.reference(db_path)
-    
-    # Get requests from the last 24 hours
-    twenty_four_hours_ago = (datetime.now() - timedelta(hours=24)).isoformat()
-    recent_requests = ref.order_by_child('request_time').start_at(twenty_four_hours_ago).get()
-    
-    if not recent_requests:
-        return False
 
-    for req in recent_requests.values():
-        # Compare key details to check for a duplicate
-        is_duplicate = (
-            req.get('employee_telegram_id') == new_request.get('employee_telegram_id') and
-            req.get('reason') == new_request.get('reason') and
-            req.get('date_info', req.get('time_info')) == new_request.get('date_info', new_request.get('time_info'))
-        )
-        if is_duplicate:
-            return True # Found a duplicate
-            
-    return False
-
-
-# --- معالجات الأوامر الرئيسية ---
+# --- معالجات الأوامر الرئيسية والميزات الجديدة ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
+    keyboard = []
+    message = f"أهلاً بك يا {user.first_name}."
     if predefined_user:
         role = predefined_user.get("role")
         if role == "hr":
-            await update.message.reply_text(f"أهلاً بك يا {user.first_name}! أنت مسجل كمدير الموارد البشرية.")
+            message += " أنت مسجل كمدير الموارد البشرية."
+            keyboard.append([InlineKeyboardButton("📋 الطلبات المعلقة", callback_data="hr_pending_requests")])
         elif role == "team_leader":
-            await update.message.reply_text(f"أهلاً بك يا {user.first_name}! أنت مسجل كقائد فريق.")
-    else:
-        keyboard = [
-            [InlineKeyboardButton("🕒 إجازة ساعية", callback_data="start_hourly_leave")],
-            [InlineKeyboardButton("🗓️ طلب إجازة", callback_data="start_full_day_leave")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"أهلاً بك يا {user.first_name} في بوت طلبات الإجازة. الرجاء اختيار نوع الطلب:",
-            reply_markup=reply_markup
-        )
-# ---- بداية معالج محادثة الإجازة الساعية ----
+            message += " أنت مسجل كقائد فريق."
+    keyboard.extend([
+        [InlineKeyboardButton("🕒 إجازة ساعية", callback_data="start_hourly_leave")],
+        [InlineKeyboardButton("🗓️ طلب إجازة يومية", callback_data="start_full_day_leave")],
+        [InlineKeyboardButton("📂 طلباتي", callback_data="my_requests")]
+    ])
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = str(query.from_user.id)
+    message = "📜 **سجل طلباتك:**\n\n"
+    found_requests = False
+    fd_leaves_ref = db.reference('/full_day_leaves').order_by_child('employee_telegram_id').equal_to(user_id).get()
+    if fd_leaves_ref:
+        found_requests = True
+        message += "--- **إجازات يومية** ---\n"
+        for _, req in fd_leaves_ref.items():
+            message += f"▫️ **المدة:** {req.get('date_info', 'N/A')}\n"
+            message += f"   **الحالة:** {req.get('status', 'N/A')}\n"
+            if req.get('status') == 'rejected' and req.get('rejection_reason'):
+                message += f"   **سبب الرفض:** {req.get('rejection_reason')}\n"
+            message += "\n"
+    hl_leaves_ref = db.reference('/hourly_leaves').order_by_child('employee_telegram_id').equal_to(user_id).get()
+    if hl_leaves_ref:
+        found_requests = True
+        message += "--- **إجازات ساعية** ---\n"
+        for _, req in hl_leaves_ref.items():
+            message += f"▫️ **التفاصيل:** {req.get('time_info', 'N/A')}\n"
+            message += f"   **التاريخ:** {req.get('date', 'N/A')}\n"
+            message += f"   **الحالة:** {req.get('status', 'N/A')}\n"
+            if req.get('status') == 'rejected' and req.get('rejection_reason'):
+                message += f"   **سبب الرفض:** {req.get('rejection_reason')}\n"
+            message += "\n"
+    if not found_requests:
+        message = "لم تقم بتقديم أي طلبات بعد."
+    await query.edit_message_text(message, parse_mode='Markdown')
+
+async def hr_pending_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("جاري جلب الطلبات المعلقة...")
+    found_requests = False
+    fd_leaves_ref = db.reference('/full_day_leaves').order_by_child('status').equal_to('pending').get()
+    if fd_leaves_ref:
+        found_requests = True
+        await query.message.reply_text("--- **طلبات الإجازة اليومية المعلقة** ---")
+        for req_id, req in fd_leaves_ref.items():
+            hr_message = (f"من: {req['employee_name']}\n"
+                          f"السبب: {req['reason']}\n"
+                          f"المدة: {req['date_info']}")
+            keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_fd_{req_id}"), 
+                         InlineKeyboardButton("❌ رفض", callback_data=f"reject_fd_{req_id}")]]
+            await query.message.reply_text(hr_message, reply_markup=InlineKeyboardMarkup(keyboard))
+    hl_leaves_ref = db.reference('/hourly_leaves').order_by_child('status').equal_to('pending').get()
+    if hl_leaves_ref:
+        found_requests = True
+        await query.message.reply_text("--- **طلبات الإجازة الساعية المعلقة** ---")
+        for req_id, req in hl_leaves_ref.items():
+            hr_message = (f"من: {req['employee_name']}\n"
+                          f"السبب: {req['reason']}\n"
+                          f"التفاصيل: {req['time_info']}")
+            keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_hourly_{req_id}"), 
+                         InlineKeyboardButton("❌ رفض", callback_data=f"reject_hourly_{req_id}")]]
+            await query.message.reply_text(hr_message, reply_markup=InlineKeyboardMarkup(keyboard))
+    if not found_requests:
+        await query.message.reply_text("لا توجد طلبات معلقة حالياً.")
+
+# --- آلية الإجازة الساعية ---
 async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("🌅 بداية الدوام (تأخير)", callback_data="hourly_late")],
-        [InlineKeyboardButton("🌇 نهاية الدوام (مغادرة مبكرة)", callback_data="hourly_early")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("اختر نوع الإجازة الساعية:", reply_markup=reply_markup)
+    keyboard = [[InlineKeyboardButton("🌅 بداية الدوام (تأخير)", callback_data="hourly_late")],[InlineKeyboardButton("🌇 نهاية الدوام (مغادرة مبكرة)", callback_data="hourly_early")]]
+    await query.edit_message_text("اختر نوع الإجازة الساعية:", reply_markup=InlineKeyboardMarkup(keyboard))
     return HL_CHOOSING_TYPE
 
 async def choose_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    leave_type = query.data.split('_')[1] # late or early
+    leave_type = query.data.split('_')[1]
     context.user_data['hourly_leave_type'] = leave_type
-    
     message = "متى ستصل إلى الدوام؟" if leave_type == 'late' else "متى ستغادر من الدوام؟"
-    
-    await query.edit_message_text(
-        text=message,
-        reply_markup=create_time_keyboard(leave_type)
-    )
+    await query.edit_message_text(text=message, reply_markup=create_time_keyboard(leave_type))
     return HL_SELECTING_TIME
 
 async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -221,10 +225,7 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
     selected_time = query.data.split('_', 1)[1]
     context.user_data['selected_time'] = selected_time
-    
-    leave_type = context.user_data['hourly_leave_type']
-    type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
-    
+    type_text = "تأخير صباحي" if context.user_data['hourly_leave_type'] == 'late' else "مغادرة مبكرة"
     await query.edit_message_text(f"تم اختيار: {type_text} - الساعة {selected_time}.")
     await query.message.reply_text("الرجاء إدخال اسمك الكامل:")
     return HL_ENTERING_NAME
@@ -236,84 +237,47 @@ async def enter_hourly_name(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def enter_hourly_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['hourly_reason'] = update.message.text
-    
-    leave_type = context.user_data['hourly_leave_type']
-    type_text = "الوصول الساعة" if leave_type == 'late' else "المغادرة الساعة"
-    
-    summary = (
-        f"--- ملخص طلب إجازة ساعية ---\n"
-        f"اسم الموظف: {context.user_data['employee_name']}\n"
-        f"السبب: {context.user_data['hourly_reason']}\n"
-        f"التاريخ: {date.today().strftime('%d/%m/%Y')}\n"
-        f"الوقت: {type_text} {context.user_data['selected_time']}\n\n"
-        "هل تريد تأكيد الطلب؟"
-    )
+    type_text = "الوصول الساعة" if context.user_data['hourly_leave_type'] == 'late' else "المغادرة الساعة"
+    summary = (f"--- ملخص طلب إجازة ساعية ---\n"
+               f"اسم الموظف: {context.user_data['employee_name']}\n"
+               f"السبب: {context.user_data['hourly_reason']}\n"
+               f"التاريخ: {date.today().strftime('%d/%m/%Y')}\n"
+               f"الوقت: {type_text} {context.user_data['selected_time']}\n\n"
+               "هل تريد تأكيد الطلب؟")
     keyboard = [[InlineKeyboardButton("✅ تأكيد", callback_data="confirm_send"), InlineKeyboardButton("❌ إلغاء", callback_data="cancel")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(summary, reply_markup=reply_markup)
+    await update.message.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard))
     return HL_CONFIRMING_LEAVE
 
 async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-
-    if query.data == "cancel":
-        await query.edit_message_text("تم إلغاء الطلب.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
+    if query.data == "cancel": return await cancel_conversation(update, context)
     user = update.effective_user
-    leave_type = context.user_data['hourly_leave_type']
-    type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
-    
-    # إنشاء الطلب للتحقق منه
-    new_request_data = {
-        "employee_name": context.user_data['employee_name'],
-        "employee_telegram_id": str(user.id),
-        "reason": context.user_data['hourly_reason'],
-        "date": date.today().strftime('%d/%m/%Y'),
-        "time_info": f"{type_text} - {context.user_data['selected_time']}",
-        "status": "pending",
-        "request_time": datetime.now().isoformat(),
-    }
-
-    # التحقق من وجود طلب مكرر
-    if check_for_duplicate_request(new_request_data, "hourly"):
-        await query.edit_message_text("عذراً، لقد قمت بالفعل بتقديم طلب مطابق لهذا الطلب مؤخراً.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    # حفظ الطلب في Firebase
-    request_id = db.reference('/hourly_leaves').push(new_request_data).key
-
+    leaves_ref = db.reference('/hourly_leaves')
+    new_leave_ref = leaves_ref.push()
+    request_id = new_leave_ref.key
+    type_text = "تأخير صباحي" if context.user_data['hourly_leave_type'] == 'late' else "مغادرة مبكرة"
+    new_leave_ref.set({ "employee_name": context.user_data['employee_name'], "employee_telegram_id": str(user.id), "reason": context.user_data['hourly_reason'], "date": date.today().strftime('%d/%m/%Y'), "time_info": f"{type_text} - {context.user_data['selected_time']}", "status": "pending", "request_time": datetime.now().isoformat()})
     hr_chat_id = get_hr_telegram_id()
     if not hr_chat_id:
         await query.edit_message_text("خطأ: لا يمكن العثور على مدير الموارد البشرية.")
         return ConversationHandler.END
-
-    hr_message = (
-        f"📣 طلب إجازة ساعية جديد 📣\n\n"
-        f"من الموظف: {context.user_data['employee_name']}\n"
-        f"السبب: {context.user_data['hourly_reason']}\n"
-        f"التفاصيل: {type_text} اليوم الساعة {context.user_data['selected_time']}\n\n"
-        "الرجاء اتخاذ إجراء:"
-    )
+    hr_message = (f"📣 طلب إجازة ساعية جديد 📣\n\n"
+                  f"من الموظف: {context.user_data['employee_name']}\n"
+                  f"السبب: {context.user_data['hourly_reason']}\n"
+                  f"التفاصيل: {type_text} اليوم الساعة {context.user_data['selected_time']}\n\n"
+                  "الرجاء اتخاذ إجراء:")
     keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_hourly_{request_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"reject_hourly_{request_id}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     try:
-        await context.bot.send_message(chat_id=hr_chat_id, text=hr_message, reply_markup=reply_markup)
+        await context.bot.send_message(chat_id=hr_chat_id, text=hr_message, reply_markup=InlineKeyboardMarkup(keyboard))
         await query.edit_message_text("✅ تم إرسال طلبك بنجاح.")
     except Exception as e:
         logger.error(f"Failed to send hourly leave to HR: {e}")
         await query.edit_message_text("حدث خطأ أثناء إرسال الطلب.")
-
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---- نهاية معالج محادثة الإجازة الساعية ----
-
-# ---- بداية معالج محادثة الإجازة اليومية ----
+# --- آلية الإجازة اليومية ---
 async def start_full_day_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -327,13 +291,8 @@ async def fd_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def fd_enter_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['leave_reason'] = update.message.text
-    keyboard = [
-        [InlineKeyboardButton("🗓️ يوم واحد", callback_data="duration_single")],
-        [InlineKeyboardButton("🔁 أيام متتالية", callback_data="duration_range")],
-        [InlineKeyboardButton("➕ أيام متفرقة", callback_data="duration_multiple")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("تم تسجيل السبب. الآن، كيف هي مدة إجازتك؟", reply_markup=reply_markup)
+    keyboard = [[InlineKeyboardButton("🗓️ يوم واحد", callback_data="duration_single")],[InlineKeyboardButton("🔁 أيام متتالية", callback_data="duration_range")],[InlineKeyboardButton("➕ أيام متفرقة", callback_data="duration_multiple")],]
+    await update.message.reply_text("تم تسجيل السبب. الآن، كيف هي مدة إجازتك؟", reply_markup=InlineKeyboardMarkup(keyboard))
     return FD_CHOOSING_DURATION_TYPE
 
 async def fd_choose_duration_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -411,23 +370,10 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     if query.data == "cancel": return await cancel_conversation(update, context)
     user = update.effective_user
-    
-    new_request_data = {
-        "employee_name": context.user_data['employee_name'],
-        "employee_telegram_id": str(user.id),
-        "reason": context.user_data['leave_reason'],
-        "date_info": context.user_data['final_date_info'],
-        "status": "pending",
-        "request_time": datetime.now().isoformat(),
-    }
-    
-    if check_for_duplicate_request(new_request_data, "full_day"):
-        await query.edit_message_text("عذراً، لقد قمت بالفعل بتقديم طلب مطابق لهذا الطلب مؤخراً.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    request_id = db.reference('/full_day_leaves').push(new_request_data).key
-    
+    leaves_ref = db.reference('/full_day_leaves')
+    new_leave_ref = leaves_ref.push()
+    request_id = new_leave_ref.key
+    new_leave_ref.set({"employee_name": context.user_data['employee_name'],"employee_telegram_id": str(user.id),"reason": context.user_data['leave_reason'],"date_info": context.user_data['final_date_info'],"status": "pending","request_time": datetime.now().isoformat(),})
     hr_chat_id = get_hr_telegram_id()
     if not hr_chat_id:
         await query.edit_message_text("خطأ: لا يمكن العثور على مدير الموارد البشرية.")
@@ -447,71 +393,74 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- معالج إجراءات الموارد البشرية (مطور باستخدام العمليات الذرية) ---
-async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# --- آلية سبب الرفض ومعالجات HR ---
+async def start_rejection_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    context.user_data['rejection_info'] = query.data 
+    await query.edit_message_text("الرجاء إدخال سبب الرفض (أو أرسل /skip للتجاوز).")
+    return AWAITING_REJECTION_REASON
+
+async def save_rejection_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    reason = update.message.text
+    rejection_info = context.user_data.pop('rejection_info', None)
+    if not rejection_info: return ConversationHandler.END
+    await process_rejection(context, rejection_info, reason)
+    await update.message.reply_text(f"تم تسجيل سبب الرفض وإبلاغ الموظف.")
+    return ConversationHandler.END
     
-    parts = query.data.split("_")
-    action = parts[0]
-    leave_type = parts[1]
-    request_id = parts[2]
-    
+async def skip_rejection_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    rejection_info = context.user_data.pop('rejection_info', None)
+    if not rejection_info: return ConversationHandler.END
+    await process_rejection(context, rejection_info, None)
+    await update.message.reply_text("تم رفض الطلب.")
+    return ConversationHandler.END
+
+async def hr_approval_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    _, leave_type, request_id = query.data.split("_", 2)
     db_path = f"/{leave_type}_leaves/{request_id}"
     leave_ref = db.reference(db_path)
-    
-    original_message = query.message.text
-    
-    def transaction_update(current_data):
-        if current_data and current_data.get("status") == "pending":
-            current_data["status"] = "approved" if action == "approve" else "rejected"
-            return current_data
-        return None
-            
-    result = leave_ref.transaction(transaction_update)
+    leave_request = leave_ref.get()
 
-    if result is None:
-        try:
-            await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
-        except Exception:
-            pass 
+    if not leave_request or leave_request.get("status") != "pending":
+        await query.edit_message_text("هذا الطلب تمت معالجته بالفعل.")
         return
-        
-    leave_request = result
-    date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
-    employee_name = leave_request.get('employee_name', 'موظف')
-    employee_id = leave_request.get("employee_telegram_id")
-    
-    final_response_text = ""
 
-    if action == "approve":
-        final_response_text = "✅ تمت الموافقة على الطلب."
-        try:
-            await context.bot.send_message(chat_id=employee_id, text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
-        except Exception as e:
-            logger.error(f"Failed to send approval message to employee {employee_id}: {e}")
-        
-        leader_ids = get_all_team_leaders_ids()
-        if leader_ids:
-            notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
-            for leader_id in leader_ids:
-                try:
-                    await context.bot.send_message(chat_id=leader_id, text=notification_message)
-                except Exception as e:
-                    logger.error(f"Failed to send notification to Team Leader {leader_id}: {e}")
-            final_response_text += "\nتم إرسال إشعار لقادة الفرق."
-            
-    else: # reject
-        final_response_text = "❌ تم رفض الطلب."
-        try:
-            await context.bot.send_message(chat_id=employee_id, text=f"للأسف، تم رفض طلب إجازتك لـِ: {date_info}.")
-        except Exception as e:
-            logger.error(f"Failed to send rejection message to employee {employee_id}: {e}")
+    leave_ref.update({"status": "approved"})
+    date_info = leave_request.get('date_info', leave_request.get('time_info', 'N/A'))
+    employee_name = leave_request.get('employee_name', 'موظف')
+    response_text = "✅ تمت الموافقة على الطلب."
+    await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
     
-    try:
-        await query.edit_message_text(text=f"{original_message}\n\n--- [ {final_response_text} ] ---")
-    except Exception as e:
-        logger.error(f"Error editing final HR message: {e}")
+    leader_ids = get_all_managers_ids() # تم التعديل ليشمل المدراء أيضاً
+    if leader_ids:
+        notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
+        for leader_id in leader_ids:
+            try:
+                await context.bot.send_message(chat_id=leader_id, text=notification_message)
+            except Exception as e:
+                logger.error(f"Failed to send notification to {leader_id}: {e}")
+        response_text += "\nتم إرسال إشعار للمسؤولين."
+    
+    await query.edit_message_text(text=f"{query.message.text}\n\n--- [ {response_text} ] ---")
+
+async def process_rejection(context: ContextTypes.DEFAULT_TYPE, rejection_info: str, reason: str | None):
+    _, leave_type, request_id = rejection_info.split("_", 2)
+    db_path = f"/{leave_type}_leaves/{request_id}"
+    leave_ref = db.reference(db_path)
+    update_data = {"status": "rejected"}
+    if reason:
+        update_data["rejection_reason"] = reason
+    leave_ref.update(update_data)
+    
+    leave_request = leave_ref.get()
+    date_info = leave_request.get('date_info', leave_request.get('time_info', 'N/A'))
+    rejection_message = f"للأسف، تم رفض طلب إجازتك لـِ: {date_info}."
+    if reason:
+        rejection_message += f"\n**السبب:** {reason}"
+    await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=rejection_message, parse_mode='Markdown')
 
 # --- دالة الإلغاء العامة ---
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -524,10 +473,63 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.clear()
     return ConversationHandler.END
 
+
+# --- المهام المجدولة ---
+async def daily_on_leave_summary(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Running daily on-leave summary job.")
+    today = date.today()
+    on_leave_today = []
+    all_leaves = db.reference('/full_day_leaves').order_by_child('status').equal_to('approved').get() or {}
+    for req in all_leaves.values():
+        date_info = req.get('date_info', '')
+        try:
+            if "من" in date_info:
+                start_str, end_str = date_info.replace("من ", "").split(" إلى ")
+                start_date = datetime.strptime(start_str, '%d/%m/%Y').date()
+                end_date = datetime.strptime(end_str, '%d/%m/%Y').date()
+                if start_date <= today <= end_date:
+                    on_leave_today.append(req['employee_name'])
+            elif date.today() == datetime.strptime(date_info, '%d/%m/%Y').date():
+                 on_leave_today.append(req['employee_name'])
+        except (ValueError, IndexError):
+            continue
+    if not on_leave_today:
+        logger.info("No employees on leave today.")
+        return
+    message = f"☀️ **تقرير الإجازات اليومي ({today.strftime('%d/%m/%Y')})** ☀️\n\nالموظفون التاليون في إجازة اليوم:\n"
+    message += "\n".join(f"- {name}" for name in on_leave_today)
+    manager_ids = get_all_managers_ids()
+    for manager_id in manager_ids:
+        try:
+            await context.bot.send_message(chat_id=manager_id, text=message, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to send daily summary to {manager_id}: {e}")
+
+async def send_leave_reminders(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Running leave reminder job.")
+    tomorrow = date.today() + timedelta(days=1)
+    all_leaves = db.reference('/full_day_leaves').order_by_child('status').equal_to('approved').get() or {}
+    for req in all_leaves.values():
+        date_info = req.get('date_info', '')
+        try:
+            start_date_str = date_info.split(" إلى ")[0].replace("من ", "")
+            start_date = datetime.strptime(start_date_str, '%d/%m/%Y').date()
+            if start_date == tomorrow:
+                await context.bot.send_message(chat_id=req['employee_telegram_id'], text=f"👋 تذكير: إجازتك تبدأ غداً! نتمنى لك وقتاً ممتعاً.")
+        except (ValueError, IndexError):
+            continue
+
 def main() -> None:
+    """يبدأ البوت ويقوم بجدولة المهام."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    full_day_leave_conv = ConversationHandler(
+    job_queue = application.job_queue
+    tz = pytz.timezone('Asia/Riyadh') 
+    job_queue.run_daily(daily_on_leave_summary, time=time(8, 0, 0, tzinfo=tz))
+    job_queue.run_daily(send_leave_reminders, time=time(18, 0, 0, tzinfo=tz))
+
+    # المعالجات
+    full_day_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_full_day_leave, pattern="^start_full_day_leave$")],
         states={
             FD_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, fd_enter_name)],
@@ -539,7 +541,7 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$")],
     )
     
-    hourly_leave_conv = ConversationHandler(
+    hourly_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_hourly_leave, pattern="^start_hourly_leave$")],
         states={
             HL_CHOOSING_TYPE: [CallbackQueryHandler(choose_hourly_type, pattern="^hourly_")],
@@ -551,12 +553,26 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$")],
     )
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(full_day_leave_conv)
-    application.add_handler(hourly_leave_conv)
-    application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
+    rejection_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_rejection_flow, pattern="^reject_")],
+        states={
+            AWAITING_REJECTION_REASON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_rejection_reason),
+                CommandHandler('skip', skip_rejection_reason)
+            ],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+    )
 
-    print("Bot is running with DUAL leave system (Full-day & Hourly)...")
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(my_requests, pattern="^my_requests$"))
+    application.add_handler(CallbackQueryHandler(hr_pending_requests, pattern="^hr_pending_requests$"))
+    application.add_handler(full_day_conv)
+    application.add_handler(hourly_conv)
+    application.add_handler(CallbackQueryHandler(hr_approval_handler, pattern="^approve_"))
+    application.add_handler(rejection_conv)
+
+    print("Bot is running with ALL PRO features...")
     application.run_polling()
 
 if __name__ == "__main__":
