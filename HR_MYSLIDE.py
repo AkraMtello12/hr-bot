@@ -307,7 +307,7 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
     hr_message = (f"📣 **طلب إذن ساعي جديد** 📣\n\n"
                   f"**من الموظف:** {context.user_data['employee_name']}\n"
                   f"**النوع:** {type_text}\n"
-                  f"**التفاصيل:** اليوم، الساعة {context.user_data['selected_time']}\n"
+                  f"**التفاصيل:** اليوم ({date.today().strftime('%d/%m/%Y')})، الساعة {context.user_data['selected_time']}\n"
                   f"**السبب:** {context.user_data['hourly_reason']}\n\n"
                   "يرجى اتخاذ الإجراء المناسب.")
     keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_hourly_{request_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"reject_hourly_{request_id}")]]
@@ -499,24 +499,36 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"Could not find leave request at path: {db_path}")
         return
 
-    # التحقق إذا تمت معالجة الطلب مسبقًا لمنع إرسال إشعارات مكررة
     if leave_request.get("status") != "pending":
         status_ar = "مقبول ✅" if leave_request.get("status") == "approved" else "مرفوض ❌"
         await query.answer(f"تنبيه: هذا الطلب تمت معالجته بالفعل وحالته الآن: {status_ar}", show_alert=True)
         return
 
-    date_info = leave_request.get('date_info') or leave_request.get('time_info', 'غير محدد')
     employee_name = leave_request.get('employee_name', 'موظف')
     hr_user = query.from_user
     
+    # --- بناء رسائل الإشعارات بناءً على نوع الإجازة ---
+    full_date_info = ""
+    leader_message_intro = ""
+    if leave_type_key == 'fd':
+        full_date_info = leave_request.get('date_info', 'غير محدد')
+        # الصيغة الجديدة المطلوبة لإشعار قادة الفرق
+        leader_message_intro = f"تم منح الموظف ({employee_name}) موافقة بخصوص غياب في التاريخ/ التواريخ التالية:"
+    else: # hourly
+        leave_date = leave_request.get('date', 'بتاريخ اليوم')
+        time_details = leave_request.get('time_info', 'وقت غير محدد')
+        # دمج التاريخ والوقت في رسالة واحدة واضحة
+        full_date_info = f"{time_details} بتاريخ {leave_date}"
+        leader_message_intro = f"تم منح الموظف ({employee_name}) موافقة بخصوص إذن:"
+
     if action == "approve":
         leave_ref.update({"status": "approved"})
         response_text = "✅ تمت الموافقة على الطلب"
-        user_notification = f"🎉 تهانينا! تمت الموافقة على طلبك بخصوص: **{date_info}**."
+        user_notification = f"🎉 تهانينا! تمت الموافقة على طلبك بخصوص: **{full_date_info}**."
         
         leader_ids = get_all_team_leaders_ids()
         if leader_ids:
-            leader_notification = f"🔔 **تنبيه للمشرفين:** تم منح الموظف ({employee_name}) موافقة بخصوص:\n`{date_info}`"
+            leader_notification = f"{leader_message_intro}\n`{full_date_info}`"
             for leader_id in leader_ids:
                 try:
                     await context.bot.send_message(chat_id=leader_id, text=leader_notification, parse_mode=ParseMode.MARKDOWN)
@@ -527,7 +539,7 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:  # reject
         leave_ref.update({"status": "rejected"})
         response_text = "❌ تم رفض الطلب"
-        user_notification = f"للأسف، تم رفض طلبك بخصوص: **{date_info}**. يرجى مراجعة مديرك المباشر."
+        user_notification = f"للأسف، تم رفض طلبك بخصوص: **{full_date_info}**. يرجى مراجعة مديرك المباشر."
     
     try:
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=user_notification, parse_mode=ParseMode.MARKDOWN)
@@ -640,7 +652,7 @@ def main() -> None:
     application.add_handler(hourly_leave_conv)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with robust logic and fixes...")
+    print("Bot is running with enhanced notifications and logic...")
     application.run_polling()
 
 if __name__ == "__main__":
