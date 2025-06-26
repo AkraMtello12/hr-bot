@@ -13,21 +13,13 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram.ext import (
-
-    Application,
-
-    CommandHandler,
-
-    ContextTypes,
-
-    ConversationHandler,
-
-    CallbackQueryHandler,
-
-    MessageHandler,
-
-    filters,
-
+Application,
+CommandHandler,
+ContextTypes,
+ConversationHandler,
+CallbackQueryHandler,
+MessageHandler,
+filters,
 )
 
 import firebase_admin
