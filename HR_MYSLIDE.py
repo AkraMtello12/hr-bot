@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import calendar
 import os
 import json
@@ -55,14 +55,15 @@ logger = logging.getLogger(__name__)
     FD_CONFIRMING_LEAVE,
 ) = range(5)
 
-# حالات محادثة الإجازة الساعية (الإذن)
+# حالات محادثة الإجازة الساعية (الإذن) - تم التعديل
 (
     HL_CHOOSING_TYPE,
+    HL_SELECTING_DATE,
     HL_SELECTING_TIME,
     HL_ENTERING_NAME,
     HL_ENTERING_REASON,
     HL_CONFIRMING_LEAVE,
-) = range(5, 10)
+) = range(5, 11)
 
 # --- دوال إنشاء واجهات المستخدم (التقويم والأزرار) ---
 def create_advanced_calendar(year: int, month: int, selection_mode: str, selected_dates: list, back_callback: str) -> InlineKeyboardMarkup:
@@ -106,6 +107,30 @@ def create_advanced_calendar(year: int, month: int, selection_mode: str, selecte
 
     keyboard.append([InlineKeyboardButton("➡️ رجوع", callback_data=back_callback), InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")])
     return InlineKeyboardMarkup(keyboard)
+
+
+def create_weekly_calendar(start_date: date, back_callback: str) -> InlineKeyboardMarkup:
+    """إنشاء تقويم لمدة أسبوع واحد بدءًا من تاريخ محدد."""
+    keyboard = []
+    days_ar = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+    
+    row = []
+    for i in range(7):
+        current_day = start_date + timedelta(days=i)
+        day_name = days_ar[current_day.weekday()]
+        # Format: 'الخميس 26'
+        button_text = f"{day_name} {current_day.day}"
+        callback_data = f"HL_DATE_{current_day.isoformat()}"
+        row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
+    
+    # Split into two rows for better layout
+    keyboard.append(row[:4])
+    keyboard.append(row[4:])
+    
+    keyboard.append([InlineKeyboardButton("➡️ رجوع", callback_data=back_callback), InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
 
 def create_time_keyboard(leave_type: str, back_callback: str) -> InlineKeyboardMarkup:
     """إنشاء لوحة مفاتيح لاختيار الوقت مع زر رجوع."""
@@ -224,43 +249,76 @@ async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return HL_CHOOSING_TYPE
 
 async def choose_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الخطوة الثانية: اختيار الوقت."""
+    """الخطوة الثانية: طلب اختيار تاريخ الإذن."""
     query = update.callback_query
     await query.answer()
     leave_type = query.data.split('_')[1]
     context.user_data['hourly_leave_type'] = leave_type
-    message = "يرجى تحديد وقت الوصول المتوقع:" if leave_type == 'late' else "يرجى تحديد وقت المغادرة:"
-    await query.edit_message_text(text=message, reply_markup=create_time_keyboard(leave_type, back_callback="hl_back_to_type"))
+
+    message = "ممتاز. الآن يرجى اختيار تاريخ الإذن من الأسبوع الحالي:"
+    today = date.today()
+    
+    await query.edit_message_text(
+        text=message,
+        reply_markup=create_weekly_calendar(start_date=today, back_callback="hl_back_to_type")
+    )
+    return HL_SELECTING_DATE
+
+async def select_hourly_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الثالثة: معالجة اختيار التاريخ وطلب الوقت."""
+    query = update.callback_query
+    await query.answer()
+    
+    # استخراج التاريخ من بيانات الرد
+    selected_date_iso = query.data.split('_', 2)[2]
+    selected_date_obj = date.fromisoformat(selected_date_iso)
+    context.user_data['hourly_selected_date'] = selected_date_obj
+    
+    leave_type = context.user_data['hourly_leave_type']
+    date_str = selected_date_obj.strftime('%d/%m/%Y')
+    message = f"تاريخ الإذن المحدد: {date_str}.\n\n"
+    message += "يرجى تحديد وقت الوصول المتوقع:" if leave_type == 'late' else "يرجى تحديد وقت المغادرة:"
+    
+    await query.edit_message_text(
+        text=message,
+        reply_markup=create_time_keyboard(leave_type, back_callback="hl_back_to_date_selection")
+    )
     return HL_SELECTING_TIME
 
 async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الخطوة الثالثة: طلب إدخال اسم الموظف."""
+    """الخطوة الرابعة: طلب إدخال اسم الموظف."""
     query = update.callback_query
     await query.answer()
     selected_time = query.data.split('_', 1)[1]
     context.user_data['selected_time'] = selected_time
-    await query.message.reply_text(f"تم اختيار الوقت: {selected_time}.\n\nالآن، يرجى إدخال اسمك الكامل لتوثيق الطلب:")
-    # Delete the inline keyboard message
+    date_str = context.user_data['hourly_selected_date'].strftime('%A, %d %B %Y')
+    await query.message.reply_text(
+        f"تم تحديد الإذن في تاريخ {date_str} الساعة {selected_time}.\n\n"
+        "الآن، يرجى إدخال اسمك الكامل لتوثيق الطلب:"
+    )
     await query.delete_message()
     return HL_ENTERING_NAME
 
 async def enter_hourly_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الخطوة الرابعة: طلب إدخال سبب الإذن."""
+    """الخطوة الخامسة: طلب إدخال سبب الإذن."""
     context.user_data['employee_name'] = update.message.text
     await update.message.reply_text("شكراً لك. يرجى الآن توضيح سبب هذا الإذن:")
     return HL_ENTERING_REASON
 
 async def enter_hourly_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الخطوة الخامسة: عرض ملخص الطلب للتأكيد."""
+    """الخطوة السادسة: عرض ملخص الطلب للتأكيد."""
     context.user_data['hourly_reason'] = update.message.text
     leave_type = context.user_data['hourly_leave_type']
     type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
     time_label = "وقت الوصول" if leave_type == 'late' else "وقت المغادرة"
     
+    # استخدام التاريخ المختار
+    selected_date_str = context.user_data['hourly_selected_date'].strftime('%d/%m/%Y')
+    
     summary = (f"📋 **ملخص طلب الإذن** 📋\n\n"
                f"👤 **اسم الموظف:** {context.user_data['employee_name']}\n"
                f"🏷️ **نوع الإذن:** {type_text}\n"
-               f"🗓️ **التاريخ:** {date.today().strftime('%d/%m/%Y')}\n"
+               f"🗓️ **التاريخ:** {selected_date_str}\n"
                f"⏰ **{time_label}:** {context.user_data['selected_time']}\n"
                f"📝 **السبب:** {context.user_data['hourly_reason']}\n\n"
                "يرجى مراجعة التفاصيل. هل تود تأكيد وإرسال الطلب؟")
@@ -289,11 +347,14 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
     type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
     time_info = f"{type_text} - {context.user_data['selected_time']}"
     
+    # استخدام التاريخ المختار
+    selected_date_obj = context.user_data['hourly_selected_date']
+    
     new_leave_ref.set({
         "employee_name": context.user_data['employee_name'],
         "employee_telegram_id": str(user.id),
         "reason": context.user_data['hourly_reason'],
-        "date": date.today().strftime('%d/%m/%Y'),
+        "date": selected_date_obj.strftime('%d/%m/%Y'),
         "time_info": time_info,
         "status": "pending",
         "request_time": datetime.now().isoformat(),
@@ -304,10 +365,12 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("⚠️ خطأ إداري: لا يمكن العثور على حساب مدير الموارد البشرية. يرجى مراجعة الإدارة.")
         return ConversationHandler.END
 
+    # استخدام التاريخ المختار في رسالة المدير
+    selected_date_str = selected_date_obj.strftime('%d/%m/%Y')
     hr_message = (f"📣 **طلب إذن ساعي جديد** 📣\n\n"
                   f"**من الموظف:** {context.user_data['employee_name']}\n"
                   f"**النوع:** {type_text}\n"
-                  f"**التفاصيل:** اليوم ({date.today().strftime('%d/%m/%Y')})، الساعة {context.user_data['selected_time']}\n"
+                  f"**التفاصيل:** بتاريخ {selected_date_str}، الساعة {context.user_data['selected_time']}\n"
                   f"**السبب:** {context.user_data['hourly_reason']}\n\n"
                   "يرجى اتخاذ الإجراء المناسب.")
     keyboard = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_hourly_{request_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"reject_hourly_{request_id}")]]
@@ -566,6 +629,13 @@ async def hl_back_to_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_text("يرجى الآن توضيح سبب هذا الإذن:")
     return HL_ENTERING_REASON
 
+async def hl_back_to_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة اختيار تاريخ الإذن."""
+    query = update.callback_query
+    await query.answer()
+    query.data = f"hourly_{context.user_data['hourly_leave_type']}"
+    return await choose_hourly_type(update, context)
+
 async def fd_back_to_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """الرجوع إلى خطوة إدخال سبب الإجازة اليومية."""
     query = update.callback_query
@@ -629,9 +699,13 @@ def main() -> None:
         entry_points=[CallbackQueryHandler(start_hourly_leave, pattern="^start_hourly_leave$")],
         states={
             HL_CHOOSING_TYPE: [CallbackQueryHandler(choose_hourly_type, pattern="^hourly_")],
+            HL_SELECTING_DATE: [
+                CallbackQueryHandler(select_hourly_date, pattern="^HL_DATE_"),
+                CallbackQueryHandler(start_hourly_leave, pattern="^hl_back_to_type$"),
+            ],
             HL_SELECTING_TIME: [
                 CallbackQueryHandler(select_time, pattern="^TIME_"),
-                CallbackQueryHandler(start_hourly_leave, pattern="^hl_back_to_type$"),
+                CallbackQueryHandler(hl_back_to_date_selection, pattern="^hl_back_to_date_selection$"),
             ],
             HL_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hourly_name)],
             HL_ENTERING_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hourly_reason)],
@@ -652,7 +726,7 @@ def main() -> None:
     application.add_handler(hourly_leave_conv)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with enhanced notifications and logic...")
+    print("Bot is running with weekly calendar for hourly leaves...")
     application.run_polling()
 
 if __name__ == "__main__":
