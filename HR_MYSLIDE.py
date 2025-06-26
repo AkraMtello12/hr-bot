@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date, time
+from datetime import datetime, date, timedelta, time
 import calendar
 import os
 import json
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -132,18 +133,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, from_back_bu
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
     
-    keyboard = [
-        [InlineKeyboardButton("🕒 إجازة ساعية", callback_data="start_hourly_leave")],
-        [InlineKeyboardButton("🗓️ طلب إجازة", callback_data="start_full_day_leave")]
-    ]
+    keyboard = []
     message = f"أهلاً بك يا {user.first_name}."
 
-    if predefined_user:
-        role = predefined_user.get("role")
-        if role == "hr":
+    # تعديل: إظهار الأزرار بناءً على الدور
+    if predefined_user and predefined_user.get("role") in ["hr", "team_leader"]:
+        # keyboard.append([InlineKeyboardButton("📋 عرض طلبات الإجازات", callback_data="manager_view_requests")]) # سيتم إضافتها لاحقاً
+        if predefined_user.get("role") == "hr":
             message += " أنت مسجل كمدير الموارد البشرية."
-        elif role == "team_leader":
+        else:
             message += " أنت مسجل كقائد فريق."
+    else:
+        # الأزرار الخاصة بالموظف العادي فقط
+        keyboard.extend([
+            [InlineKeyboardButton("🕒 إجازة ساعية", callback_data="start_hourly_leave")],
+            [InlineKeyboardButton("🗓️ طلب إجازة", callback_data="start_full_day_leave")]
+        ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -188,7 +193,15 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
 
     if query.data == 'back_to_hourly_type':
-        return await start_hourly_leave(update, context)
+        # Simply re-show the previous menu
+        keyboard = [
+            [InlineKeyboardButton("🌅 بداية الدوام (تأخير)", callback_data="hourly_late")],
+            [InlineKeyboardButton("🌇 نهاية الدوام (مغادرة مبكرة)", callback_data="hourly_early")],
+            [InlineKeyboardButton("⬅️ عودة للقائمة الرئيسية", callback_data="back_to_main")]
+        ]
+        await query.edit_message_text("اختر نوع الإجازة الساعية:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return HL_CHOOSING_TYPE
+
 
     selected_time = query.data.split('_', 1)[1]
     context.user_data['selected_time'] = selected_time
@@ -248,7 +261,7 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
 async def start_full_day_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("حسناً، لطلب إجازة يوم كامل أو أكثر، الرجاء إدخال اسمك الكامل: (للعودة أرسل /cancel)")
+    await query.edit_message_text("حسناً، لطلب إجازة يوم كامل أو أكثر، الرجاء إدخال اسمك الكامل: (للإلغاء أرسل /cancel)")
     return FD_ENTERING_NAME
 
 async def fd_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -450,7 +463,7 @@ def main() -> None:
             FD_SELECTING_DATES: [CallbackQueryHandler(fd_calendar_callback, pattern="^CAL_|^back_to_duration_type$")],
             FD_CONFIRMING_LEAVE: [CallbackQueryHandler(confirm_full_day_leave, pattern="^confirm_send$")],
         },
-        fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$")],
+        fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$"), CommandHandler("cancel", cancel_conversation)],
     )
     
     # معالج محادثة الإجازة الساعية
@@ -463,15 +476,16 @@ def main() -> None:
             HL_ENTERING_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hourly_reason)],
             HL_CONFIRMING_LEAVE: [CallbackQueryHandler(confirm_hourly_leave, pattern="^confirm_send$")],
         },
-        fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$")],
+        fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$"), CommandHandler("cancel", cancel_conversation)],
     )
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(back_to_main_menu, pattern="^back_to_main$"))
     application.add_handler(full_day_leave_conv)
     application.add_handler(hourly_leave_conv)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with DUAL leave system (Full-day & Hourly)...")
+    print("Bot is running with Back Button feature...")
     application.run_polling()
 
 if __name__ == "__main__":
