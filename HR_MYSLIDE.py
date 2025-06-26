@@ -19,7 +19,6 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # --- قسم الإعدادات (Firebase and Telegram) ---
-# الرجاء استبدال القيم أدناه بالقيم الخاصة بك أو استخدام متغيرات البيئة
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo")
 FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app")
 
@@ -45,25 +44,14 @@ except Exception as e:
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- تعريف حالات المحادثات ---
-# حالات محادثة الإجازة اليومية
+# --- تعريف حالات المحادثات الموحدة ---
 (
-    FD_ENTERING_NAME,
-    FD_ENTERING_REASON,
-    FD_CHOOSING_DURATION_TYPE,
-    FD_SELECTING_DATES,
-    FD_CONFIRMING_LEAVE,
-) = range(5)
-
-# حالات محادثة الإجازة الساعية (الإذن)
-(
-    HL_CHOOSING_TYPE,
-    HL_SELECTING_DATE,
-    HL_SELECTING_TIME,
-    HL_ENTERING_NAME,
-    HL_ENTERING_REASON,
-    HL_CONFIRMING_LEAVE,
-) = range(5, 11)
+    CHOOSING_ACTION,
+    # حالات الإجازة اليومية
+    FD_ENTERING_NAME, FD_ENTERING_REASON, FD_CHOOSING_DURATION_TYPE, FD_SELECTING_DATES, FD_CONFIRMING_LEAVE,
+    # حالات الإذن الساعي
+    HL_CHOOSING_TYPE, HL_SELECTING_DATE, HL_SELECTING_TIME, HL_ENTERING_NAME, HL_ENTERING_REASON, HL_CONFIRMING_LEAVE
+) = range(12)
 
 # --- دوال إنشاء واجهات المستخدم (التقويم والأزرار) ---
 def create_advanced_calendar(year: int, month: int, selection_mode: str, selected_dates: list, back_callback: str) -> InlineKeyboardMarkup:
@@ -153,7 +141,7 @@ def create_time_keyboard(leave_type: str, back_callback: str) -> InlineKeyboardM
     keyboard.append([InlineKeyboardButton("➡️ رجوع", callback_data=back_callback), InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")])
     return InlineKeyboardMarkup(keyboard)
 
-# --- دوال مساعدة (قاعدة البيانات والتنقل) ---
+# --- دوال مساعدة (قاعدة البيانات) ---
 def get_predefined_user(telegram_id: str):
     try:
         ref = db.reference('/users')
@@ -188,46 +176,37 @@ def get_hr_telegram_id():
         logger.error(f"Error fetching HR ID: {e}")
     return None
 
-async def display_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- دوال المحادثة الرئيسية ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """نقطة البداية الرئيسية ومُنشئ القائمة الرئيسية."""
     user = update.effective_user
+    predefined_user = get_predefined_user(str(user.id))
+
+    if predefined_user:
+        role = predefined_user.get("role")
+        role_name = "مدير الموارد البشرية" if role == "hr" else "قائد فريق"
+        await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [{role_name}].")
+        return ConversationHandler.END
+
     keyboard = [
-        [InlineKeyboardButton("🕒 طلب إذن (ساعي)", callback_data="start_hourly_leave")],
-        [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="start_full_day_leave")]
+        [InlineKeyboardButton("🕒 طلب إذن (ساعي)", callback_data="req_hourly")],
+        [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="req_daily")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = f"أهلاً بك {user.first_name} في نظام طلبات الإجازة والأذونات.\n\nاختر الخدمة التي تريدها من القائمة:"
 
-    query = update.callback_query
-    if query:
-        await query.answer()
-        try:
-            await query.edit_message_text(text=message_text, reply_markup=reply_markup)
-        except Exception as e:
-            logger.warning(f"Could not edit message, sending new one. Reason: {e}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=message_text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        
+    return CHOOSING_ACTION
 
-async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await display_main_menu(update, context)
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# --- معالجات الأوامر الرئيسية ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    predefined_user = get_predefined_user(str(user.id))
-    if predefined_user:
-        role = predefined_user.get("role")
-        if role == "hr":
-            await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [مدير الموارد البشرية].")
-        elif role == "team_leader":
-            await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [قائد فريق].")
-    else:
-        await display_main_menu(update, context)
-
-# ---- بداية محادثة الإجازة الساعية (الإذن) ----
+# ---- مسار طلب الإجازة الساعية (الإذن) ----
 async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الأولى: اختيار نوع الإذن."""
     query = update.callback_query
     await query.answer()
     keyboard = [
@@ -240,6 +219,7 @@ async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return HL_CHOOSING_TYPE
 
 async def choose_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الثانية: طلب اختيار تاريخ الإذن."""
     query = update.callback_query
     await query.answer()
     leave_type = query.data.split('_')[1]
@@ -253,6 +233,7 @@ async def choose_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return HL_SELECTING_DATE
 
 async def select_hourly_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الثالثة: معالجة اختيار التاريخ وطلب الوقت."""
     query = update.callback_query
     await query.answer()
     selected_date_iso = query.data.split('_', 2)[2]
@@ -269,24 +250,26 @@ async def select_hourly_date(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return HL_SELECTING_TIME
 
 async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الرابعة: طلب إدخال اسم الموظف."""
     query = update.callback_query
     await query.answer()
     selected_time = query.data.split('_', 1)[1]
     context.user_data['selected_time'] = selected_time
     date_str = context.user_data['hourly_selected_date'].strftime('%A, %d %B %Y')
-    await query.message.reply_text(
+    await query.edit_message_text(
         f"تم تحديد الإذن في تاريخ {date_str} الساعة {selected_time}.\n\n"
         "الآن، يرجى إدخال اسمك الكامل لتوثيق الطلب:"
     )
-    await query.delete_message()
     return HL_ENTERING_NAME
 
 async def enter_hourly_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الخامسة: طلب إدخال سبب الإذن."""
     context.user_data['employee_name'] = update.message.text
     await update.message.reply_text("شكراً لك. يرجى الآن توضيح سبب هذا الإذن:")
     return HL_ENTERING_REASON
 
 async def enter_hourly_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة السادسة: عرض ملخص الطلب للتأكيد."""
     context.user_data['hourly_reason'] = update.message.text
     leave_type = context.user_data['hourly_leave_type']
     type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
@@ -308,6 +291,7 @@ async def enter_hourly_reason(update: Update, context: ContextTypes.DEFAULT_TYPE
     return HL_CONFIRMING_LEAVE
 
 async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الإجراء الأخير: حفظ الطلب وإرساله للمدير."""
     query = update.callback_query
     await query.answer()
 
@@ -359,8 +343,9 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.clear()
     return ConversationHandler.END
 
-# ---- بداية محادثة الإجازة اليومية ----
+# ---- مسار طلب الإجازة اليومية ----
 async def start_full_day_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الخطوة الأولى: طلب إدخال اسم الموظف."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("لتسجيل طلب إجازة، يرجى إدخال اسمك الكامل:")
@@ -506,7 +491,7 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- معالج إجراءات الموارد البشرية (مطور ومعدل) ---
+# --- معالج إجراءات المدير ---
 async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -536,17 +521,14 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     employee_name = leave_request.get('employee_name', 'موظف')
     hr_user = query.from_user
     
-    # --- بناء رسائل الإشعارات بناءً على نوع الإجازة ---
     full_date_info = ""
     leader_message_intro = ""
     if leave_type_key == 'fd':
         full_date_info = leave_request.get('date_info', 'غير محدد')
-        # الصيغة الجديدة المطلوبة لإشعار قادة الفرق
         leader_message_intro = f"تم منح الموظف ({employee_name}) موافقة بخصوص غياب في التاريخ/ التواريخ التالية:"
-    else: # hourly
+    else:
         leave_date = leave_request.get('date', 'بتاريخ اليوم')
         time_details = leave_request.get('time_info', 'وقت غير محدد')
-        # دمج التاريخ والوقت في رسالة واحدة واضحة
         full_date_info = f"{time_details} بتاريخ {leave_date}"
         leader_message_intro = f"تم منح الموظف ({employee_name}) موافقة بخصوص إذن:"
 
@@ -565,7 +547,7 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     logger.error(f"Failed to send notification to Team Leader {leader_id}: {e}")
             response_text += "\n(تم إشعار قادة الفرق)"
             
-    else:  # reject
+    else:
         leave_ref.update({"status": "rejected"})
         response_text = "❌ تم رفض الطلب"
         user_notification = f"للأسف، تم رفض طلبك بخصوص: **{full_date_info}**. يرجى مراجعة مديرك المباشر."
@@ -587,34 +569,52 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 # --- دوال الرجوع (Back Handlers) ---
-# FIX: A new, robust back handler to prevent freezes
-async def hl_back_to_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الرجوع إلى خطوة إدخال سبب الإذن - يحل مشكلة التجمد."""
-    query = update.callback_query
-    await query.answer()
-    await query.delete_message() # إزالة رسالة التأكيد والأزرار
-    await query.message.reply_text("حسناً، تم التراجع. يرجى إدخال سبب الإذن مرة أخرى:")
-    return HL_ENTERING_REASON
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دالة الرجوع إلى القائمة الرئيسية من داخل المحادثة."""
+    context.user_data.clear()
+    return await start(update, context)
 
-async def hl_back_to_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def back_to_hourly_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة اختيار نوع الإذن."""
+    return await start_hourly_leave(update, context)
+
+async def back_to_hourly_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """الرجوع إلى خطوة اختيار تاريخ الإذن."""
     query = update.callback_query
-    await query.answer()
-    # استدعاء الدالة التي تعرض التقويم الأسبوعي مرة أخرى
-    query.data = f"hourly_{context.user_data['hourly_leave_type']}"
+    query.data = f"hourly_{context.user_data['hourly_leave_type']}" # إعادة بناء البيانات
     return await choose_hourly_type(update, context)
 
-async def fd_back_to_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """الرجوع إلى خطوة إدخال سبب الإجازة اليومية - يحل مشكلة التجمد."""
+async def back_to_hourly_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة اختيار وقت الإذن."""
     query = update.callback_query
     await query.answer()
-    await query.delete_message() # إزالة رسالة أنواع المدة والأزرار
-    await query.message.reply_text("حسناً، تم التراجع. يرجى إدخال سبب الإجازة مرة أخرى:")
-    return FD_ENTERING_REASON
+    await query.delete_message()
+    await query.message.reply_text(f"تم التراجع. يرجى تحديد وقت الوصول/المغادرة مرة أخرى:")
+    # Re-call the time selection step
+    query.data = f"HL_DATE_{context.user_data['hourly_selected_date'].isoformat()}"
+    return await select_hourly_date(update, context)
+
+async def back_to_hourly_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة إدخال السبب (للإذن)."""
+    query = update.callback_query
+    await query.answer()
+    await query.delete_message()
+    await query.message.reply_text("تم التراجع. يرجى إدخال سبب الإذن مرة أخرى:")
+    return HL_ENTERING_REASON
     
-async def fd_back_to_duration_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def back_to_daily_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة إدخال السبب (للإجازة اليومية)."""
     query = update.callback_query
     await query.answer()
+    await query.delete_message()
+    await query.message.reply_text("تم التراجع. يرجى إدخال سبب الإجازة مرة أخرى:")
+    return FD_ENTERING_REASON
+
+async def back_to_daily_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة اختيار نوع مدة الإجازة."""
+    query = update.callback_query
+    await query.answer()
+    # Recreate the duration selection message
     keyboard = [
         [InlineKeyboardButton("🗓️ يوم واحد", callback_data="duration_single")],
         [InlineKeyboardButton("🔁 أيام متتالية", callback_data="duration_range")],
@@ -622,12 +622,13 @@ async def fd_back_to_duration_type(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton("➡️ رجوع (لتعديل السبب)", callback_data="fd_back_to_reason")],
         [InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")],
     ]
-    await query.edit_message_text("تم تسجيل الاسم. يرجى الآن تحديد مدة الإجازة:", reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("تم تسجيل الاسم. يرجى الآن تحديد مدة الإجازة:", reply_markup=reply_markup)
     return FD_CHOOSING_DURATION_TYPE
 
-async def fd_back_to_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def back_to_daily_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة التقويم."""
     query = update.callback_query
-    await query.answer()
     query.data = f"duration_{context.user_data['duration_type']}"
     return await fd_choose_duration_type(update, context)
 
@@ -636,63 +637,62 @@ def main() -> None:
     """الدالة الرئيسية لتشغيل البوت."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # --- تعريف محادثات الإجازات ---
-    full_day_leave_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_full_day_leave, pattern="^start_full_day_leave$")],
+    # --- معالج المحادثة الموحد ---
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
         states={
-            FD_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, fd_enter_name)],
-            FD_ENTERING_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, fd_enter_reason)],
-            FD_CHOOSING_DURATION_TYPE: [
-                CallbackQueryHandler(fd_choose_duration_type, pattern="^duration_"),
-                CallbackQueryHandler(fd_back_to_reason, pattern="^fd_back_to_reason$"),
+            CHOOSING_ACTION: [
+                CallbackQueryHandler(start_hourly_leave, pattern="^req_hourly$"),
+                CallbackQueryHandler(start_full_day_leave, pattern="^req_daily$"),
             ],
-            FD_SELECTING_DATES: [
-                CallbackQueryHandler(fd_calendar_callback, pattern="^CAL_"),
-                CallbackQueryHandler(fd_back_to_duration_type, pattern="^fd_back_to_duration_type$"),
+            # حالات الإجازة الساعية
+            HL_CHOOSING_TYPE: [
+                CallbackQueryHandler(choose_hourly_type, pattern="^hourly_"),
+                CallbackQueryHandler(back_to_main_menu, pattern="^main_menu$")
             ],
-            FD_CONFIRMING_LEAVE: [
-                CallbackQueryHandler(confirm_full_day_leave, pattern="^confirm_send$"),
-                CallbackQueryHandler(fd_back_to_calendar, pattern="^fd_back_to_calendar$"),
-            ],
-        },
-        fallbacks=[
-            CallbackQueryHandler(cancel_conversation, pattern="^cancel$"),
-            CallbackQueryHandler(return_to_main_menu, pattern="^main_menu$")
-        ],
-    )
-    
-    hourly_leave_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_hourly_leave, pattern="^start_hourly_leave$")],
-        states={
-            HL_CHOOSING_TYPE: [CallbackQueryHandler(choose_hourly_type, pattern="^hourly_")],
             HL_SELECTING_DATE: [
                 CallbackQueryHandler(select_hourly_date, pattern="^HL_DATE_"),
-                CallbackQueryHandler(start_hourly_leave, pattern="^hl_back_to_type$"),
+                CallbackQueryHandler(back_to_hourly_type, pattern="^hl_back_to_type$"),
             ],
             HL_SELECTING_TIME: [
                 CallbackQueryHandler(select_time, pattern="^TIME_"),
-                CallbackQueryHandler(hl_back_to_date_selection, pattern="^hl_back_to_date_selection$"),
+                CallbackQueryHandler(back_to_hourly_date, pattern="^hl_back_to_date_selection$"),
             ],
             HL_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hourly_name)],
             HL_ENTERING_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hourly_reason)],
             HL_CONFIRMING_LEAVE: [
                 CallbackQueryHandler(confirm_hourly_leave, pattern="^confirm_send$"),
-                CallbackQueryHandler(hl_back_to_reason, pattern="^hl_back_to_reason$"),
+                CallbackQueryHandler(back_to_hourly_reason, pattern="^hl_back_to_reason$"),
+            ],
+            # حالات الإجازة اليومية
+            FD_ENTERING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, fd_enter_name)],
+            FD_ENTERING_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, fd_enter_reason)],
+            FD_CHOOSING_DURATION_TYPE: [
+                CallbackQueryHandler(fd_choose_duration_type, pattern="^duration_"),
+                CallbackQueryHandler(back_to_daily_reason, pattern="^fd_back_to_reason$"),
+            ],
+            FD_SELECTING_DATES: [
+                CallbackQueryHandler(fd_calendar_callback, pattern="^CAL_"),
+                CallbackQueryHandler(back_to_daily_duration, pattern="^fd_back_to_duration_type$"),
+            ],
+            FD_CONFIRMING_LEAVE: [
+                CallbackQueryHandler(confirm_full_day_leave, pattern="^confirm_send$"),
+                CallbackQueryHandler(back_to_daily_calendar, pattern="^fd_back_to_calendar$"),
             ],
         },
         fallbacks=[
-            CallbackQueryHandler(cancel_conversation, pattern="^cancel$"),
-            CallbackQueryHandler(return_to_main_menu, pattern="^main_menu$")
+            CommandHandler('start', start),
+            CallbackQueryHandler(back_to_main_menu, pattern="^main_menu$"),
+            CallbackQueryHandler(cancel_conversation, pattern="^cancel$")
         ],
+        allow_reentry=True
     )
 
     # إضافة المعالجات إلى التطبيق
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(full_day_leave_conv)
-    application.add_handler(hourly_leave_conv)
+    application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with robust state handling...")
+    print("Bot is running with a unified and robust conversation handler...")
     application.run_polling()
 
 if __name__ == "__main__":
