@@ -4,7 +4,6 @@ from datetime import datetime, date, time
 import calendar
 import os
 import json
-import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -423,29 +422,33 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     original_message = query.message.text
     
     def transaction_update(current_data):
-        # هذه الدالة تعمل بشكل ذري
         if current_data and current_data.get("status") == "pending":
             current_data["status"] = "approved" if action == "approve" else "rejected"
             return current_data
-        else:
-            # إذا لم تكن الحالة "pending"، لا تقم بأي تغيير
-            return 
+        return None
             
-    # تنفيذ العملية الذرية
     result = leave_ref.transaction(transaction_update)
 
     if result is None:
-        await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
+        try:
+            await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
+        except Exception:
+            pass # Ignore if message is already gone
         return
         
-    # إذا نجحت العملية، أكمل إرسال الإشعارات
     leave_request = result
     date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
     employee_name = leave_request.get('employee_name', 'موظف')
+    employee_id = leave_request.get("employee_telegram_id")
+    
+    final_response_text = ""
 
     if action == "approve":
-        response_text = "✅ تمت الموافقة على الطلب."
-        await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
+        final_response_text = "✅ تمت الموافقة على الطلب."
+        try:
+            await context.bot.send_message(chat_id=employee_id, text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
+        except Exception as e:
+            logger.error(f"Failed to send approval message to employee {employee_id}: {e}")
         
         leader_ids = get_all_team_leaders_ids()
         if leader_ids:
@@ -454,15 +457,20 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 try:
                     await context.bot.send_message(chat_id=leader_id, text=notification_message)
                 except Exception as e:
-                    logger.error(f"Failed to send message to Team Leader {leader_id}: {e}")
-            response_text += "\nتم إرسال إشعار لقادة الفرق."
+                    logger.error(f"Failed to send notification to Team Leader {leader_id}: {e}")
+            final_response_text += "\nتم إرسال إشعار لقادة الفرق."
             
     else: # reject
-        response_text = "❌ تم رفض الطلب."
-        await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"للأسف، تم رفض طلب إجازتك لـِ: {date_info}.")
+        final_response_text = "❌ تم رفض الطلب."
+        try:
+            await context.bot.send_message(chat_id=employee_id, text=f"للأسف، تم رفض طلب إجازتك لـِ: {date_info}.")
+        except Exception as e:
+            logger.error(f"Failed to send rejection message to employee {employee_id}: {e}")
     
-    await query.edit_message_text(text=f"{original_message}\n\n--- [ {response_text} ] ---")
-
+    try:
+        await query.edit_message_text(text=f"{original_message}\n\n--- [ {final_response_text} ] ---")
+    except Exception as e:
+        logger.error(f"Error editing final HR message: {e}")
 
 # --- دالة الإلغاء العامة ---
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
