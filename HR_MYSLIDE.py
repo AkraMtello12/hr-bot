@@ -4,6 +4,7 @@ from datetime import datetime, date, time
 import calendar
 import os
 import json
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -18,8 +19,8 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 # --- قسم الإعدادات (Firebase and Telegram) ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo") 
-FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app") 
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo")
+FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app")
 
 # --- إعداد اتصال Firebase ---
 try:
@@ -64,7 +65,6 @@ logger = logging.getLogger(__name__)
 
 # --- دوال إنشاء التقويم ---
 def create_advanced_calendar(year: int, month: int, selection_mode: str, selected_dates: list) -> InlineKeyboardMarkup:
-    # ... (This function remains the same)
     cal = calendar.Calendar()
     month_name = calendar.month_name[month]
     today = date.today()
@@ -382,25 +382,12 @@ async def show_fd_confirmation(query, context):
 async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-
-    if query.data == "cancel":
-        await query.edit_message_text("تم إلغاء الطلب.")
-        context.user_data.clear()
-        return ConversationHandler.END
-
+    if query.data == "cancel": return await cancel_conversation(update, context)
     user = update.effective_user
-    leaves_ref = db.reference('/full_day_leaves') # حفظ في قسم منفصل
+    leaves_ref = db.reference('/full_day_leaves')
     new_leave_ref = leaves_ref.push()
     request_id = new_leave_ref.key
-    
-    new_leave_ref.set({
-        "employee_name": context.user_data['employee_name'],
-        "employee_telegram_id": str(user.id),
-        "reason": context.user_data['leave_reason'],
-        "date_info": context.user_data['final_date_info'],
-        "status": "pending",
-        "request_time": datetime.now().isoformat(),
-    })
+    new_leave_ref.set({"employee_name": context.user_data['employee_name'],"employee_telegram_id": str(user.id),"reason": context.user_data['leave_reason'],"date_info": context.user_data['final_date_info'],"status": "pending","request_time": datetime.now().isoformat(),})
     hr_chat_id = get_hr_telegram_id()
     if not hr_chat_id:
         await query.edit_message_text("خطأ: لا يمكن العثور على مدير الموارد البشرية.")
@@ -420,7 +407,7 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- معالج إجراءات الموارد البشرية (مطور) ---
+# --- معالج إجراءات الموارد البشرية (مطور باستخدام العمليات الذرية) ---
 async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -432,26 +419,37 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     db_path = f"/{leave_type}_leaves/{request_id}"
     leave_ref = db.reference(db_path)
-    leave_request = leave_ref.get()
+    
+    original_message = query.message.text
+    
+    def transaction_update(current_data):
+        # هذه الدالة تعمل بشكل ذري
+        if current_data and current_data.get("status") == "pending":
+            current_data["status"] = "approved" if action == "approve" else "rejected"
+            return current_data
+        else:
+            # إذا لم تكن الحالة "pending"، لا تقم بأي تغيير
+            return 
+            
+    # تنفيذ العملية الذرية
+    result = leave_ref.transaction(transaction_update)
 
-    if not leave_request or leave_request.get("status") != "pending":
-        await query.edit_message_text("هذا الطلب تمت معالجته بالفعل.")
+    if result is None:
+        await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
         return
-
+        
+    # إذا نجحت العملية، أكمل إرسال الإشعارات
+    leave_request = result
     date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
     employee_name = leave_request.get('employee_name', 'موظف')
 
     if action == "approve":
-        leave_ref.update({"status": "approved"})
         response_text = "✅ تمت الموافقة على الطلب."
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"تهانينا! تمت الموافقة على طلب إجازتك لـِ: {date_info}.")
         
-        # --- التعديل: إرسال إشعار لقادة الفرق في كلتا الحالتين ---
         leader_ids = get_all_team_leaders_ids()
         if leader_ids:
-            # تخصيص رسالة الإشعار بناءً على نوع الإجازة
             notification_message = f"🔔 تنبيه: الموظف ({employee_name}) لديه إذن لـِ: {date_info}."
-            
             for leader_id in leader_ids:
                 try:
                     await context.bot.send_message(chat_id=leader_id, text=notification_message)
@@ -460,17 +458,20 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             response_text += "\nتم إرسال إشعار لقادة الفرق."
             
     else: # reject
-        leave_ref.update({"status": "rejected"})
         response_text = "❌ تم رفض الطلب."
         await context.bot.send_message(chat_id=leave_request["employee_telegram_id"], text=f"للأسف، تم رفض طلب إجازتك لـِ: {date_info}.")
     
-    original_message = query.message.text
     await query.edit_message_text(text=f"{original_message}\n\n--- [ {response_text} ] ---")
 
+
+# --- دالة الإلغاء العامة ---
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("تم إلغاء العملية.")
+    if query:
+        await query.answer()
+        await query.edit_message_text("تم إلغاء العملية.")
+    else:
+        await update.message.reply_text("تم إلغاء العملية.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -506,7 +507,6 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(full_day_leave_conv)
     application.add_handler(hourly_leave_conv)
-    # تعديل النمط للتمييز بين نوعي الإجازة في رد المدير
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
     print("Bot is running with DUAL leave system (Full-day & Hourly)...")
