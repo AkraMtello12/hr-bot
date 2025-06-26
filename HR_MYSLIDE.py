@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
     # حالات الإجازة اليومية
     FD_ENTERING_NAME, FD_ENTERING_REASON, FD_CHOOSING_DURATION_TYPE, FD_SELECTING_DATES, FD_CONFIRMING_LEAVE,
     # حالات الإذن الساعي
-    HL_CHOOSING_TYPE, HL_SELECTING_DATE, HL_SELECTING_TIME, HL_ENTERING_NAME, HL_ENTERING_REASON, HL_CONFIRMING_LEAVE
-) = range(12)
+    HL_CHOOSING_TYPE, HL_SELECTING_DATE, HL_SELECTING_TIME, HL_ENTERING_NAME, HL_ENTERING_REASON, HL_CONFIRMING_LEAVE,
+    # حالات صندوق الاقتراحات
+    SUGGESTION_ENTERING, SUGGESTION_CONFIRMING_ANONYMITY
+) = range(14)
 
 # --- دوال إنشاء واجهات المستخدم (التقويم والأزرار) ---
 def create_advanced_calendar(year: int, month: int, selection_mode: str, selected_dates: list, back_callback: str) -> InlineKeyboardMarkup:
@@ -183,15 +185,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
 
-    if predefined_user:
-        role = predefined_user.get("role")
-        role_name = "مدير الموارد البشرية" if role == "hr" else "قائد فريق"
-        await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [{role_name}].")
+    if predefined_user and predefined_user.get("role") == "hr":
+        await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [مدير الموارد البشرية].")
         return ConversationHandler.END
 
     keyboard = [
         [InlineKeyboardButton("🕒 طلب إذن (ساعي)", callback_data="req_hourly")],
-        [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="req_daily")]
+        [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="req_daily")],
+        [InlineKeyboardButton("💡 صندوق الاقتراحات والشكاوي", callback_data="req_suggestion")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     message_text = f"أهلاً بك {user.first_name} في نظام طلبات الإجازة والأذونات.\n\nاختر الخدمة التي تريدها من القائمة:"
@@ -203,6 +204,93 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(text=message_text, reply_markup=reply_markup)
         
     return CHOOSING_ACTION
+
+# ---- مسار صندوق الاقتراحات والشكاوي ----
+async def start_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """يبدأ تدفق صندوق الاقتراحات."""
+    query = update.callback_query
+    await query.answer()
+    keyboard = [[InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "أهلاً بك في صندوق الاقتراحات والشكاوي.\n\n"
+        "يرجى كتابة رسالتك كاملة. سيتم إرسالها إلى مدير الموارد البشرية.",
+        reply_markup=reply_markup
+    )
+    return SUGGESTION_ENTERING
+
+async def enter_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """يستقبل رسالة المستخدم ويعرض خيارات الخصوصية."""
+    message_text = update.message.text
+    context.user_data['suggestion_text'] = message_text
+
+    keyboard = [
+        [InlineKeyboardButton("👤 إظهار اسمي", callback_data="sugg_show_name")],
+        [InlineKeyboardButton("🔒 إرسال كرسالة مجهولة", callback_data="sugg_anonymous")],
+        [InlineKeyboardButton("➡️ رجوع (لتعديل الرسالة)", callback_data="sugg_back_to_edit")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "شكراً لك. كيف تود إرسال رسالتك؟",
+        reply_markup=reply_markup
+    )
+    return SUGGESTION_CONFIRMING_ANONYMITY
+
+async def confirm_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """يؤكد الإرسال، يحفظ في Firebase، ويرسل إلى الموارد البشرية."""
+    query = update.callback_query
+    await query.answer()
+    
+    choice = query.data
+    suggestion_text = context.user_data.get('suggestion_text')
+    if not suggestion_text:
+        await query.edit_message_text("حدث خطأ ما. يرجى المحاولة مرة أخرى.")
+        return await start(update, context)
+
+    user = update.effective_user
+    hr_chat_id = get_hr_telegram_id()
+
+    if not hr_chat_id:
+        await query.edit_message_text("⚠️ خطأ إداري: لا يمكن العثور على حساب مدير الموارد البشرية. لم يتم إرسال الرسالة.")
+        return ConversationHandler.END
+
+    sender_info = ""
+    sender_name_for_db = ""
+    
+    if choice == 'sugg_show_name':
+        sender_info = f"المرسل: {user.full_name}"
+        sender_name_for_db = user.full_name
+    else:  # sugg_anonymous
+        sender_info = "المرسل: رسالة من موظف"
+        sender_name_for_db = "Anonymous"
+    
+    hr_message = f"📬 رسالة جديدة في صندوق الاقتراحات 📬\n\n**{sender_info}**\n\n---\n{suggestion_text}\n---"
+    
+    # حفظ في Firebase
+    try:
+        suggestions_ref = db.reference('/suggestions')
+        suggestions_ref.push().set({
+            'message': suggestion_text,
+            'sender_name': sender_name_for_db,
+            'sender_id': str(user.id) if choice == 'sugg_show_name' else 'N/A',
+            'sent_at': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Firebase error saving suggestion: {e}")
+        await query.edit_message_text("حدث خطأ أثناء حفظ رسالتك. يرجى المحاولة لاحقًا.")
+        return ConversationHandler.END
+
+    # إرسال إلى الموارد البشرية
+    try:
+        await context.bot.send_message(chat_id=hr_chat_id, text=hr_message, parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text("✅ تم إرسال رسالتك بنجاح. شكراً لمساهمتك.")
+    except Exception as e:
+        logger.error(f"Failed to send suggestion to HR: {e}")
+        await query.edit_message_text("حدث خطأ أثناء إرسال الرسالة إلى المدير. يرجى المحاولة لاحقًا.")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
 
 # ---- مسار طلب الإجازة الساعية (الإذن) ----
 async def start_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -651,6 +739,15 @@ def main() -> None:
             CHOOSING_ACTION: [
                 CallbackQueryHandler(start_hourly_leave, pattern="^req_hourly$"),
                 CallbackQueryHandler(start_full_day_leave, pattern="^req_daily$"),
+                CallbackQueryHandler(start_suggestion, pattern="^req_suggestion$"),
+            ],
+            # حالات صندوق الاقتراحات
+            SUGGESTION_ENTERING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_suggestion)
+            ],
+            SUGGESTION_CONFIRMING_ANONYMITY: [
+                CallbackQueryHandler(confirm_suggestion, pattern="^sugg_"),
+                CallbackQueryHandler(start_suggestion, pattern="^sugg_back_to_edit$")
             ],
             # حالات الإجازة الساعية
             HL_CHOOSING_TYPE: [
@@ -704,7 +801,7 @@ def main() -> None:
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with a unified and robust conversation handler...")
+    print("Bot is running with Suggestions Box feature...")
     application.run_polling()
 
 if __name__ == "__main__":
