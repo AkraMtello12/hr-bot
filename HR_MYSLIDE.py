@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date, time
+from datetime import datetime, date, timedelta, time
 import calendar
 import os
 import json
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -100,7 +101,6 @@ def create_advanced_calendar(year: int, month: int, selection_mode: str, selecte
 def create_time_keyboard(leave_type: str) -> InlineKeyboardMarkup:
     keyboard = []
     if leave_type == 'late':
-        # أوقات الوصول المتأخر الجديدة (9:30 - 14:00)
         keyboard = [
             [InlineKeyboardButton("9:30 AM", callback_data="TIME_9:30 AM"), InlineKeyboardButton("10:00 AM", callback_data="TIME_10:00 AM")],
             [InlineKeyboardButton("10:30 AM", callback_data="TIME_10:30 AM"), InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM")],
@@ -109,7 +109,6 @@ def create_time_keyboard(leave_type: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("1:30 PM", callback_data="TIME_1:30 PM"), InlineKeyboardButton("2:00 PM", callback_data="TIME_2:00 PM")],
         ]
     elif leave_type == 'early':
-        # أوقات المغادرة المبكرة الجديدة (11:00 - 15:30)
         keyboard = [
             [InlineKeyboardButton("11:00 AM", callback_data="TIME_11:00 AM"), InlineKeyboardButton("11:30 AM", callback_data="TIME_11:30 AM")],
             [InlineKeyboardButton("12:00 PM", callback_data="TIME_12:00 PM"), InlineKeyboardButton("12:30 PM", callback_data="TIME_12:30 PM")],
@@ -145,6 +144,31 @@ def get_hr_telegram_id():
         if user_data and user_data.get("role") == "hr":
             return user_data.get("telegram_id")
     return None
+    
+def check_for_duplicate_request(new_request: dict, leave_type: str) -> bool:
+    """Checks for identical requests submitted in the last 24 hours."""
+    db_path = f"/{leave_type}_leaves"
+    ref = db.reference(db_path)
+    
+    # Get requests from the last 24 hours
+    twenty_four_hours_ago = (datetime.now() - timedelta(hours=24)).isoformat()
+    recent_requests = ref.order_by_child('request_time').start_at(twenty_four_hours_ago).get()
+    
+    if not recent_requests:
+        return False
+
+    for req in recent_requests.values():
+        # Compare key details to check for a duplicate
+        is_duplicate = (
+            req.get('employee_telegram_id') == new_request.get('employee_telegram_id') and
+            req.get('reason') == new_request.get('reason') and
+            req.get('date_info', req.get('time_info')) == new_request.get('date_info', new_request.get('time_info'))
+        )
+        if is_duplicate:
+            return True # Found a duplicate
+            
+    return False
+
 
 # --- معالجات الأوامر الرئيسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,14 +263,11 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     user = update.effective_user
-    leaves_ref = db.reference('/hourly_leaves') # حفظ في قسم منفصل
-    new_leave_ref = leaves_ref.push()
-    request_id = new_leave_ref.key
-    
     leave_type = context.user_data['hourly_leave_type']
     type_text = "تأخير صباحي" if leave_type == 'late' else "مغادرة مبكرة"
     
-    new_leave_ref.set({
+    # إنشاء الطلب للتحقق منه
+    new_request_data = {
         "employee_name": context.user_data['employee_name'],
         "employee_telegram_id": str(user.id),
         "reason": context.user_data['hourly_reason'],
@@ -254,7 +275,16 @@ async def confirm_hourly_leave(update: Update, context: ContextTypes.DEFAULT_TYP
         "time_info": f"{type_text} - {context.user_data['selected_time']}",
         "status": "pending",
         "request_time": datetime.now().isoformat(),
-    })
+    }
+
+    # التحقق من وجود طلب مكرر
+    if check_for_duplicate_request(new_request_data, "hourly"):
+        await query.edit_message_text("عذراً، لقد قمت بالفعل بتقديم طلب مطابق لهذا الطلب مؤخراً.")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # حفظ الطلب في Firebase
+    request_id = db.reference('/hourly_leaves').push(new_request_data).key
 
     hr_chat_id = get_hr_telegram_id()
     if not hr_chat_id:
@@ -381,10 +411,23 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     if query.data == "cancel": return await cancel_conversation(update, context)
     user = update.effective_user
-    leaves_ref = db.reference('/full_day_leaves')
-    new_leave_ref = leaves_ref.push()
-    request_id = new_leave_ref.key
-    new_leave_ref.set({"employee_name": context.user_data['employee_name'],"employee_telegram_id": str(user.id),"reason": context.user_data['leave_reason'],"date_info": context.user_data['final_date_info'],"status": "pending","request_time": datetime.now().isoformat(),})
+    
+    new_request_data = {
+        "employee_name": context.user_data['employee_name'],
+        "employee_telegram_id": str(user.id),
+        "reason": context.user_data['leave_reason'],
+        "date_info": context.user_data['final_date_info'],
+        "status": "pending",
+        "request_time": datetime.now().isoformat(),
+    }
+    
+    if check_for_duplicate_request(new_request_data, "full_day"):
+        await query.edit_message_text("عذراً، لقد قمت بالفعل بتقديم طلب مطابق لهذا الطلب مؤخراً.")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    request_id = db.reference('/full_day_leaves').push(new_request_data).key
+    
     hr_chat_id = get_hr_telegram_id()
     if not hr_chat_id:
         await query.edit_message_text("خطأ: لا يمكن العثور على مدير الموارد البشرية.")
@@ -404,7 +447,7 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- معالج إجراءات الموارد البشرية (مبسط ومحصن ضد الأخطاء) ---
+# --- معالج إجراءات الموارد البشرية (مطور باستخدام العمليات الذرية) ---
 async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -417,28 +460,28 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     db_path = f"/{leave_type}_leaves/{request_id}"
     leave_ref = db.reference(db_path)
     
-    # الخطوة 1: قراءة الطلب من قاعدة البيانات
-    leave_request = leave_ref.get()
-
-    # الخطوة 2: التحقق فوراً إذا كان الطلب قد تمت معالجته
-    if not leave_request or leave_request.get("status") != "pending":
-        try:
-            await query.edit_message_text(text=f"{query.message.text}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
-        except Exception as e:
-            logger.error(f"Error editing message for already processed request: {e}")
-        return
-
-    # الخطوة 3: تحديث الحالة في قاعدة البيانات
-    new_status = "approved" if action == "approve" else "rejected"
-    leave_ref.update({"status": new_status})
+    original_message = query.message.text
     
-    # تحديث المتغير المحلي بالبيانات الجديدة
-    leave_request['status'] = new_status
+    def transaction_update(current_data):
+        if current_data and current_data.get("status") == "pending":
+            current_data["status"] = "approved" if action == "approve" else "rejected"
+            return current_data
+        return None
+            
+    result = leave_ref.transaction(transaction_update)
 
-    # الخطوة 4: إرسال الإشعارات مع معالجة الأخطاء
+    if result is None:
+        try:
+            await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
+        except Exception:
+            pass 
+        return
+        
+    leave_request = result
     date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
     employee_name = leave_request.get('employee_name', 'موظف')
     employee_id = leave_request.get("employee_telegram_id")
+    
     final_response_text = ""
 
     if action == "approve":
@@ -465,9 +508,8 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logger.error(f"Failed to send rejection message to employee {employee_id}: {e}")
     
-    # الخطوة 5: تعديل الرسالة الأصلية لمدير الموارد البشرية
     try:
-        await query.edit_message_text(text=f"{query.message.text}\n\n--- [ {final_response_text} ] ---")
+        await query.edit_message_text(text=f"{original_message}\n\n--- [ {final_response_text} ] ---")
     except Exception as e:
         logger.error(f"Error editing final HR message: {e}")
 
@@ -485,7 +527,6 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
 def main() -> None:
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # معالج محادثة الإجازة اليومية
     full_day_leave_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_full_day_leave, pattern="^start_full_day_leave$")],
         states={
@@ -498,7 +539,6 @@ def main() -> None:
         fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel$")],
     )
     
-    # معالج محادثة الإجازة الساعية
     hourly_leave_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_hourly_leave, pattern="^start_hourly_leave$")],
         states={
