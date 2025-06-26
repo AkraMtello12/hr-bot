@@ -185,18 +185,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
 
+    # Logic for HR Manager (no changes)
     if predefined_user and predefined_user.get("role") == "hr":
         await update.message.reply_text(f"أهلاً وسهلاً، {user.first_name}! تم تسجيل دخولك بصلاحيات [مدير الموارد البشرية].")
         return ConversationHandler.END
 
-    keyboard = [
-        [InlineKeyboardButton("🕒 طلب إذن (ساعي)", callback_data="req_hourly")],
-        [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="req_daily")],
-        [InlineKeyboardButton("💡 صندوق الاقتراحات والشكاوي", callback_data="req_suggestion")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    message_text = f"أهلاً بك {user.first_name} في نظام طلبات الإجازة والأذونات.\n\nاختر الخدمة التي تريدها من القائمة:"
+    # Differentiate menu based on role
+    if predefined_user and predefined_user.get("role") == "team_leader":
+        # Menu for Team Leaders
+        keyboard = [
+            [InlineKeyboardButton("💡 صندوق الاقتراحات والشكاوي", callback_data="req_suggestion")]
+        ]
+        message_text = f"أهلاً بك يا قائد الفريق {user.first_name}!\n\nيمكنك استخدام صندوق الاقتراحات والشكاوي للتواصل المباشر."
+    else:
+        # Menu for regular employees
+        keyboard = [
+            [InlineKeyboardButton("🕒 طلب إذن (ساعي)", callback_data="req_hourly")],
+            [InlineKeyboardButton("🗓️ طلب إجازة (يومي)", callback_data="req_daily")],
+            [InlineKeyboardButton("💡 صندوق الاقتراحات والشكاوي", callback_data="req_suggestion")]
+        ]
+        message_text = f"أهلاً بك {user.first_name} في نظام طلبات الإجازة والأذونات.\n\nاختر الخدمة التي تريدها من القائمة:"
 
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(text=message_text, reply_markup=reply_markup)
