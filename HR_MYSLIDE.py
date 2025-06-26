@@ -4,7 +4,8 @@ from datetime import datetime, date, time
 import calendar
 import os
 import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode # <-- تم التعديل هنا
 from telegram.ext import (
     Application,
     CommandHandler,
