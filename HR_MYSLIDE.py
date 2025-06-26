@@ -151,14 +151,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     predefined_user = get_predefined_user(str(user.id))
     if predefined_user:
-        # رسائل ترحيب للمدراء
         role = predefined_user.get("role")
         if role == "hr":
             await update.message.reply_text(f"أهلاً بك يا {user.first_name}! أنت مسجل كمدير الموارد البشرية.")
         elif role == "team_leader":
             await update.message.reply_text(f"أهلاً بك يا {user.first_name}! أنت مسجل كقائد فريق.")
     else:
-        # الواجهة الرئيسية للموظف
         keyboard = [
             [InlineKeyboardButton("🕒 إجازة ساعية", callback_data="start_hourly_leave")],
             [InlineKeyboardButton("🗓️ طلب إجازة", callback_data="start_full_day_leave")]
@@ -406,7 +404,7 @@ async def confirm_full_day_leave(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- معالج إجراءات الموارد البشرية (مطور باستخدام العمليات الذرية) ---
+# --- معالج إجراءات الموارد البشرية (مبسط ومحصن ضد الأخطاء) ---
 async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -419,28 +417,28 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     db_path = f"/{leave_type}_leaves/{request_id}"
     leave_ref = db.reference(db_path)
     
-    original_message = query.message.text
-    
-    def transaction_update(current_data):
-        if current_data and current_data.get("status") == "pending":
-            current_data["status"] = "approved" if action == "approve" else "rejected"
-            return current_data
-        return None
-            
-    result = leave_ref.transaction(transaction_update)
+    # الخطوة 1: قراءة الطلب من قاعدة البيانات
+    leave_request = leave_ref.get()
 
-    if result is None:
+    # الخطوة 2: التحقق فوراً إذا كان الطلب قد تمت معالجته
+    if not leave_request or leave_request.get("status") != "pending":
         try:
-            await query.edit_message_text(text=f"{original_message}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
-        except Exception:
-            pass # Ignore if message is already gone
+            await query.edit_message_text(text=f"{query.message.text}\n\n--- [ ⚠️ هذا الطلب تمت معالجته بالفعل ] ---")
+        except Exception as e:
+            logger.error(f"Error editing message for already processed request: {e}")
         return
-        
-    leave_request = result
+
+    # الخطوة 3: تحديث الحالة في قاعدة البيانات
+    new_status = "approved" if action == "approve" else "rejected"
+    leave_ref.update({"status": new_status})
+    
+    # تحديث المتغير المحلي بالبيانات الجديدة
+    leave_request['status'] = new_status
+
+    # الخطوة 4: إرسال الإشعارات مع معالجة الأخطاء
     date_info = leave_request.get('date_info', leave_request.get('time_info', 'غير محدد'))
     employee_name = leave_request.get('employee_name', 'موظف')
     employee_id = leave_request.get("employee_telegram_id")
-    
     final_response_text = ""
 
     if action == "approve":
@@ -467,8 +465,9 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logger.error(f"Failed to send rejection message to employee {employee_id}: {e}")
     
+    # الخطوة 5: تعديل الرسالة الأصلية لمدير الموارد البشرية
     try:
-        await query.edit_message_text(text=f"{original_message}\n\n--- [ {final_response_text} ] ---")
+        await query.edit_message_text(text=f"{query.message.text}\n\n--- [ {final_response_text} ] ---")
     except Exception as e:
         logger.error(f"Error editing final HR message: {e}")
 
