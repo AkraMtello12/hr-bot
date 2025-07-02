@@ -287,24 +287,25 @@ async def start_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         "أهلاً بك في صندوق الاقتراحات والشكاوي.\n\n"
-        "يرجى كتابة رسالتك كاملة هنا. سيتم إرسالها إلى مدير الموارد البشرية.",
-        reply_markup=reply_markup
+        "يرجى كتابة رسالتك كاملة هنا. سيتم إرسالها إلى مدير الموارد البشرية."
+        "\n\n*ملاحظة: سيتم إرسال رسالتك كمجهول. إذا كنت ترغب في إرسالها باسمك، يرجى كتابة اسمك ضمن نص الرسالة.*", # ملاحظة جديدة
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.MARKDOWN # لتنسيق الملاحظة
     )
     return SUGGESTION_ENTERING
 
 async def enter_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """يستقبل رسالة المستخدم ويعرض خيارات الخصوصية (إظهار الاسم أو إرسال مجهول)."""
+    """يستقبل رسالة المستخدم ويعرض خيارات الخصوصية (الآن فقط خيار مجهول)."""
     message_text = update.message.text
     context.user_data['suggestion_text'] = message_text
 
     keyboard = [
-        [InlineKeyboardButton("👤 إظهار اسمي", callback_data="sugg_show_name")],
-        [InlineKeyboardButton("🔒 إرسال كرسالة مجهولة", callback_data="sugg_anonymous")],
+        [InlineKeyboardButton("🔒 إرسال كرسالة مجهولة", callback_data="sugg_anonymous")], # تم إزالة خيار إظهار الاسم
         [InlineKeyboardButton("➡️ رجوع (لتعديل الرسالة)", callback_data="sugg_back_to_edit")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "شكراً لك على رسالتك. كيف تود إرسالها؟",
+        "شكراً لك على رسالتك. يرجى تأكيد الإرسال:", # تم تعديل النص ليناسب الخيار الوحيد
         reply_markup=reply_markup
     )
     return SUGGESTION_CONFIRMING_ANONYMITY
@@ -312,12 +313,12 @@ async def enter_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def confirm_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     يؤكد الإرسال، يحفظ الاقتراح في Firebase، ويرسله إلى مدير الموارد البشرية.
-    يسمح بالإرسال باسم المستخدم أو بشكل مجهول.
+    يتم الإرسال دائمًا بشكل مجهول الآن.
     """
     query = update.callback_query
     await query.answer()
     
-    choice = query.data
+    # لم نعد بحاجة للتحقق من 'choice' لأن الخيار الوحيد هو 'sugg_anonymous'
     suggestion_text = context.user_data.get('suggestion_text')
     if not suggestion_text:
         await query.edit_message_text("حدث خطأ ما: لم يتم العثور على نص الاقتراح. يرجى المحاولة مرة أخرى من البداية.")
@@ -330,15 +331,10 @@ async def confirm_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("⚠️ خطأ إداري: لا يمكن العثور على حساب مدير الموارد البشرية. لم يتم إرسال الرسالة. يرجى التواصل مع الإدارة.")
         return ConversationHandler.END
 
-    sender_info = ""
-    sender_name_for_db = ""
-    
-    if choice == 'sugg_show_name':
-        sender_info = f"المرسل: {user.full_name}"
-        sender_name_for_db = user.full_name
-    else:  # sugg_anonymous
-        sender_info = "المرسل: رسالة من موظف (مجهول)" # تم تحسين النص
-        sender_name_for_db = "Anonymous"
+    # دائماً يتم الإرسال كمجهول
+    sender_info = "المرسل: رسالة من موظف (مجهول)"
+    sender_name_for_db = "Anonymous"
+    sender_id_for_db = 'N/A' # لا يتم حفظ ID المستخدم للرسائل المجهولة
     
     hr_message = f"📬 رسالة جديدة في صندوق الاقتراحات 📬\n\n**{sender_info}**\n\n---\n{suggestion_text}\n---"
     
@@ -348,7 +344,7 @@ async def confirm_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE)
         suggestions_ref.push().set({
             'message': suggestion_text,
             'sender_name': sender_name_for_db,
-            'sender_id': str(user.id) if choice == 'sugg_show_name' else 'N/A',
+            'sender_id': sender_id_for_db,
             'sent_at': datetime.now().isoformat()
         })
     except Exception as e:
@@ -848,6 +844,21 @@ async def back_to_daily_calendar(update: Update, context: ContextTypes.DEFAULT_T
     query.data = f"duration_{context.user_data['duration_type']}"
     return await fd_choose_duration_type(update, context)
 
+# --- دالة جديدة للرجوع في قسم الاقتراحات ---
+async def back_to_suggestion_entering(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """الرجوع إلى خطوة إدخال رسالة الاقتراح."""
+    query = update.callback_query
+    await query.answer()
+    # حذف الرسالة الحالية التي تحتوي على خيارات التأكيد
+    await query.edit_message_text(
+        "تم التراجع. يرجى إعادة كتابة رسالتك كاملة هنا:"
+        "\n\n*ملاحظة: سيتم إرسال رسالتك كمجهول. إذا كنت ترغب في إرسالها باسمك، يرجى كتابة اسمك ضمن نص الرسالة.*",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    # مسح نص الاقتراح السابق من user_data لتجنب إرسال النص القديم عن طريق الخطأ
+    context.user_data.pop('suggestion_text', None)
+    return SUGGESTION_ENTERING
+
 async def post_init(application: Application) -> None:
     """دالة يتم استدعاؤها بعد تهيئة البوت لوضع الأوامر الثابتة مثل /start."""
     await application.bot.set_my_commands([
@@ -873,8 +884,8 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_suggestion)
             ],
             SUGGESTION_CONFIRMING_ANONYMITY: [
-                CallbackQueryHandler(confirm_suggestion, pattern="^sugg_"),
-                CallbackQueryHandler(start_suggestion, pattern="^sugg_back_to_edit$") # معالج زر الرجوع لتعديل الرسالة
+                CallbackQueryHandler(confirm_suggestion, pattern="^sugg_anonymous$"), # فقط خيار المجهول
+                CallbackQueryHandler(back_to_suggestion_entering, pattern="^sugg_back_to_edit$") # معالج زر الرجوع الجديد
             ],
             # حالات الإجازة الساعية
             HL_CHOOSING_TYPE: [
