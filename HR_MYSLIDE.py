@@ -301,7 +301,8 @@ async def enter_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     keyboard = [
         [InlineKeyboardButton("🔒 إرسال كرسالة مجهولة", callback_data="sugg_anonymous")], # تم إزالة خيار إظهار الاسم
-        [InlineKeyboardButton("➡️ رجوع (لتعديل الرسالة)", callback_data="sugg_back_to_edit")]
+        [InlineKeyboardButton("➡️ رجوع (لتعديل الرسالة)", callback_data="sugg_back_to_edit")],
+        [InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")] # زر الرجوع للقائمة الرئيسية
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -853,6 +854,7 @@ async def back_to_suggestion_entering(update: Update, context: ContextTypes.DEFA
     await query.edit_message_text(
         "تم التراجع. يرجى إعادة كتابة رسالتك كاملة هنا:"
         "\n\n*ملاحظة: سيتم إرسال رسالتك كمجهول. إذا كنت ترغب في إرسالها باسمك، يرجى كتابة اسمك ضمن نص الرسالة.*",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("القائمة الرئيسية ↩️", callback_data="main_menu")]]), # إضافة زر القائمة الرئيسية
         parse_mode=ParseMode.MARKDOWN
     )
     # مسح نص الاقتراح السابق من user_data لتجنب إرسال النص القديم عن طريق الخطأ
@@ -881,11 +883,13 @@ def main() -> None:
             ],
             # حالات صندوق الاقتراحات
             SUGGESTION_ENTERING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_suggestion)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_suggestion),
+                CallbackQueryHandler(back_to_main_menu, pattern="^main_menu$"), # إضافة معالج لزر القائمة الرئيسية
             ],
             SUGGESTION_CONFIRMING_ANONYMITY: [
                 CallbackQueryHandler(confirm_suggestion, pattern="^sugg_anonymous$"), # فقط خيار المجهول
-                CallbackQueryHandler(back_to_suggestion_entering, pattern="^sugg_back_to_edit$") # معالج زر الرجوع الجديد
+                CallbackQueryHandler(back_to_suggestion_entering, pattern="^sugg_back_to_edit$"), # معالج زر الرجوع الجديد
+                CallbackQueryHandler(back_to_main_menu, pattern="^main_menu$"), # إضافة معالج لزر القائمة الرئيسية
             ],
             # حالات الإجازة الساعية
             HL_CHOOSING_TYPE: [
