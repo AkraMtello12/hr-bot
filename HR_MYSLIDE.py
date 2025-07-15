@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time
 import calendar
 import os
 import json
@@ -775,6 +775,96 @@ async def hr_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     final_text = f"{original_message}\n\n--- [ {response_text} بواسطة: {hr_user.first_name} ] ---"
     await query.edit_message_text(text=final_text)
 
+# --- قسم التذكيرات (جديد) ---
+def parse_start_date(date_info: str) -> date | None:
+    """
+    تحليل نص تاريخ الإجازة لاستخراج تاريخ البدء.
+    يعالج الحالات: يوم واحد، نطاق، أيام متعددة.
+    """
+    try:
+        # الحالة: "من 01/08/2024 إلى 05/08/2024"
+        if "من" in date_info:
+            date_str = date_info.split(" ")[1]
+            return datetime.strptime(date_str, "%d/%m/%Y").date()
+        # الحالة: "01/08/2024, 03/08/2024"
+        elif "," in date_info:
+            date_str = date_info.split(",")[0].strip()
+            return datetime.strptime(date_str, "%d/%m/%Y").date()
+        # الحالة: "01/08/2024"
+        else:
+            return datetime.strptime(date_info, "%d/%m/%Y").date()
+    except (ValueError, IndexError) as e:
+        logger.error(f"Could not parse date from string '{date_info}': {e}")
+        return None
+
+async def check_upcoming_leaves(context: ContextTypes.DEFAULT_TYPE):
+    """
+    مهمة يومية للتحقق من الإجازات القادمة وإرسال تذكيرات.
+    تعمل هذه المهمة كل يوم في الساعة 9 مساءً.
+    """
+    logger.info("Running daily job: check_upcoming_leaves")
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    
+    # جلب قائمة المستلمين (مدير الموارد البشرية وقادة الفرق)
+    recipient_ids = set(get_all_team_leaders_ids())
+    hr_id = get_hr_telegram_id()
+    if hr_id:
+        recipient_ids.add(hr_id)
+        
+    if not recipient_ids:
+        logger.warning("No recipients (HR/Team Leaders) found for reminders.")
+        return
+
+    # 1. التحقق من الإجازات اليومية
+    try:
+        full_day_leaves = db.reference('/full_day_leaves').get() or {}
+        for leave_id, leave_data in full_day_leaves.items():
+            if leave_data and leave_data.get("status") == "approved":
+                start_date = parse_start_date(leave_data.get("date_info", ""))
+                if start_date and start_date == tomorrow:
+                    employee_name = leave_data.get("employee_name", "غير معروف")
+                    date_info = leave_data.get("date_info", "")
+                    reminder_message = (
+                        f"📢 **تذكير بإجازة قادمة** 📢\n\n"
+                        f"نود تذكيركم بأن الموظف: **{employee_name}** سيكون في إجازة تبدأ غداً.\n\n"
+                        f"**التفاصيل:** {date_info}"
+                    )
+                    for chat_id in recipient_ids:
+                        try:
+                            await context.bot.send_message(chat_id=chat_id, text=reminder_message, parse_mode=ParseMode.MARKDOWN)
+                        except Exception as e:
+                            logger.error(f"Failed to send reminder to {chat_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error checking full day leaves for reminders: {e}")
+
+    # 2. التحقق من الإجازات الساعية (الأذونات)
+    try:
+        hourly_leaves = db.reference('/hourly_leaves').get() or {}
+        for leave_id, leave_data in hourly_leaves.items():
+            if leave_data and leave_data.get("status") == "approved":
+                try:
+                    leave_date = datetime.strptime(leave_data.get("date", ""), "%d/%m/%Y").date()
+                    if leave_date == tomorrow:
+                        employee_name = leave_data.get("employee_name", "غير معروف")
+                        time_info = leave_data.get("time_info", "")
+                        date_str = leave_data.get("date", "")
+                        reminder_message = (
+                            f"📢 **تذكير بإذن قادم** 📢\n\n"
+                            f"نود تذكيركم بأن الموظف: **{employee_name}** لديه إذن غداً.\n\n"
+                            f"**التفاصيل:** {time_info} بتاريخ {date_str}"
+                        )
+                        for chat_id in recipient_ids:
+                            try:
+                                await context.bot.send_message(chat_id=chat_id, text=reminder_message, parse_mode=ParseMode.MARKDOWN)
+                            except Exception as e:
+                                logger.error(f"Failed to send reminder to {chat_id}: {e}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Could not parse date for hourly leave {leave_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error checking hourly leaves for reminders: {e}")
+
+# --- دوال الإلغاء والرجوع ---
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """دالة عامة لإلغاء أي عملية محادثة جارية."""
     query = update.callback_query
@@ -783,7 +873,6 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.clear() # مسح بيانات المستخدم
     return ConversationHandler.END
 
-# --- دوال الرجوع (Back Handlers) ---
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """دالة الرجوع إلى القائمة الرئيسية من داخل المحادثة، ومسح بيانات المستخدم."""
     context.user_data.clear()
@@ -871,6 +960,11 @@ def main() -> None:
     """الدالة الرئيسية لتشغيل البوت."""
     application = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     
+    # --- جدولة مهمة التذكير اليومية (جديد) ---
+    job_queue = application.job_queue
+    # جدولة المهمة لتعمل كل يوم الساعة 21:00 (9 مساءً) بتوقيت الخادم
+    job_queue.run_daily(check_upcoming_leaves, time=time(21, 0, 0))
+    
     # --- معالج المحادثة الموحد ---
     # يحدد هذا المعالج تدفق المحادثة بالكامل وحالاتها المختلفة.
     conv_handler = ConversationHandler(
@@ -946,7 +1040,7 @@ def main() -> None:
     # معالج خاص لإجراءات مدير الموارد البشرية (الموافقة/الرفض)
     application.add_handler(CallbackQueryHandler(hr_action_handler, pattern="^(approve|reject)_(fd|hourly)_"))
 
-    print("Bot is running with Suggestions Box feature...")
+    print("Bot is running with Reminders and Suggestions Box feature...")
     application.run_polling() # بدء تشغيل البوت
 
 if __name__ == "__main__":
