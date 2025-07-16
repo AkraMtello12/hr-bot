@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, time
 import calendar
 import os
 import json
+import pytz # <-- إضافة جديدة للتعامل مع المناطق الزمنية
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -960,10 +961,16 @@ def main() -> None:
     """الدالة الرئيسية لتشغيل البوت."""
     application = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     
-    # --- جدولة مهمة التذكير اليومية (جديد) ---
+    # --- جدولة مهمة التذكير اليومية (تعديل جديد) ---
     job_queue = application.job_queue
-    # جدولة المهمة لتعمل كل يوم الساعة 21:00 (9 مساءً) بتوقيت الخادم
-    job_queue.run_daily(check_upcoming_leaves, time=time(21, 0, 0))
+    
+    # تحديد المنطقة الزمنية (سوريا، UTC+3)
+    syria_tz = pytz.timezone('Asia/Damascus')
+    
+    # جدولة المهمة لتعمل كل يوم الساعة 21:00 (9 مساءً) بتوقيت سوريا
+    # يجب أن يكون كائن الوقت مدركًا للمنطقة الزمنية
+    job_time = time(21, 0, 0, tzinfo=syria_tz)
+    job_queue.run_daily(check_upcoming_leaves, time=job_time)
     
     # --- معالج المحادثة الموحد ---
     # يحدد هذا المعالج تدفق المحادثة بالكامل وحالاتها المختلفة.
