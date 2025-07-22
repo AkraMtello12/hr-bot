@@ -22,7 +22,7 @@ from firebase_admin import credentials, db
 # --- قسم الإعدادات (Firebase and Telegram) ---
 # يتم جلب توكن التليجرام ورابط قاعدة بيانات Firebase من متغيرات البيئة
 # أو استخدام قيم افتراضية إذا لم تكن موجودة.
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAEPa_fgGad_MbmR5i35ZmBLWGgC8G1xmIo")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8022986919:AAHBv-rVvkdVX_5vnB-3_w1NVIHzS3IKSrU")
 FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL", "https://hr-myslide-default-rtdb.europe-west1.firebasedatabase.app")
 
 # --- إعداد اتصال Firebase ---
